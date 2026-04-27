@@ -24,30 +24,53 @@ const esbuildProblemMatcherPlugin = {
 };
 
 async function main() {
-	const ctx = await esbuild.context({
-		entryPoints: [
-			'src/extension.ts'
-		],
-		bundle: true,
-		format: 'cjs',
-		minify: production,
-		sourcemap: !production,
-		sourcesContent: false,
-		platform: 'node',
-		outfile: 'dist/extension.js',
-		external: ['vscode'],
-		logLevel: 'silent',
-		plugins: [
-			/* add to the end of plugins array */
-			esbuildProblemMatcherPlugin,
-		],
-	});
-	if (watch) {
-		await ctx.watch();
-	} else {
-		await ctx.rebuild();
-		await ctx.dispose();
-	}
+    // --- 1. Extension Build Context (The Brain) ---
+    const extensionCtx = await esbuild.context({
+        entryPoints: ['src/extension.ts'],
+        bundle: true,
+        format: 'cjs',
+        minify: production,
+        sourcemap: !production,
+        sourcesContent: false,
+        platform: 'node',
+        outfile: 'dist/extension.js',
+        external: ['vscode'],
+        logLevel: 'silent',
+        plugins: [esbuildProblemMatcherPlugin],
+    });
+
+    // --- 2. Webview Build Context (The Face) ---
+    
+    const webviewCtx = await esbuild.context({
+        entryPoints: ['webview/src/main.tsx'], 
+        bundle: true,
+        format: 'iife', 
+        minify: production,
+        sourcemap: !production,
+        platform: 'browser', // Crucial: This tells esbuild to target the browser, not Node.js
+        outfile: 'dist/webview.js',
+        define: {
+            'process.env.NODE_ENV': production ? '"production"' : '"development"',
+        },
+        logLevel: 'silent',
+        plugins: [esbuildProblemMatcherPlugin], //  reuse plugin here too!
+    });
+
+    if (watch) {
+        // Watch both simultaneously
+        await Promise.all([
+            extensionCtx.watch(),
+            webviewCtx.watch()
+        ]);
+    } else {
+        // Build both once
+        await Promise.all([
+            extensionCtx.rebuild(),
+            webviewCtx.rebuild()
+        ]);
+        await extensionCtx.dispose();
+        await webviewCtx.dispose();
+    }
 }
 
 main().catch(e => {
