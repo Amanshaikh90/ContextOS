@@ -1,0 +1,16 @@
+/* Resetting the environment to feel like a native VS Code tab */
+body {
+  margin: 0;
+  padding: 0;
+  overflow: hidden; /* VS Code handles scrolling, we don't want double scrollbars */
+  background-color: transparent; /* Allows VS Code's theme background to show through */
+  color: var(--vscode-foreground);
+  font-family: var(--vscode-font-family);
+  font-weight: var(--vscode-font-weight);
+  font-size: var(--vscode-font-size);
+  user-select: none; /* Prevents text selection like a standard UI */
+}
+
+button {
+  font-family: var(--vscode-font-family);
+}
