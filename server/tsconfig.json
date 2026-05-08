@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    /* File Layout */
+    "rootDir": "./src",
+    "outDir": "./dist",
+
+    /* Environment Settings */
+    "module": "NodeNext",
+    "moduleResolution": "NodeNext",
+    "target": "ESNext",
+    "lib": ["ESNext"],
+    "types": ["node"],
+
+    /* Interop & Reliability */
+    "esModuleInterop": true,            // Essential for importing Express and Cors
+    "skipLibCheck": true,               // Prevents errors from your node_modules
+    "forceConsistentCasingInFileNames": true,
+
+    /* Strictness */
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "isolatedModules": true,
+
+    /* Modern Module Handling */
+    "moduleDetection": "force",
+    "verbatimModuleSyntax": false,      // CHANGED: Set to false to fix the 'import' errors
+    
+    /* Other Outputs */
+    "sourceMap": true,
+    "declaration": true
+  },
+  "include": ["src/**/*"]
+}
