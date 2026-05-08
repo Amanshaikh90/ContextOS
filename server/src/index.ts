@@ -1,8 +1,9 @@
 import express from 'express';
 import cors from 'cors';
-import {createUser, saveToken} from './services/dbHelper.js';
+import {createUser, getTokenByUserId, saveToken} from './services/dbHelper.js';
 import { timeStamp } from 'node:console';
 import authRoutes from './routes/auth.js';
+import { fetchGitHubPRs } from './services/github.js';
 
 
 
@@ -36,16 +37,33 @@ app.post('/auth/init',async(req,res)=>{
     }
 });
 
-app.get('/context',async(req,res)=>{
-    const {file} = req.query;
+app.get('/context', async (req, res) => {
+    const { userId } = req.query; // Now expecting userId from the extension
 
+    if (!userId) {
+        return res.status(400).json({ error: "userId is required" });
+    }
 
-    res.json({
-        file,
-        tickets: [{ id: 'AUTH-124', title: 'Fix token refresh', status: 'In Progress' }],
-        prs: [{ number: 89, title: 'Fix OAuth flow', author: 'alice' }],
-        slackThreads: [{ channel: 'engineering', preview: 'Discussed the refresh token issue...' }]
-    });
+    try {
+        // 1. Fetch the GitHub token from  DB
+        const tokenData = await getTokenByUserId(userId as string, 'github');
+
+        if (!tokenData) {
+            return res.status(404).json({ error: "GitHub not connected" });
+        }
+
+        // 2. Fetch REAL data from GitHub API
+        const realPRs = await fetchGitHubPRs(tokenData.accessToken);
+
+        res.json({
+            prs: realPRs,
+            tickets: [], // Future Jira integration
+            slackThreads: [] // Future Slack integration
+        });
+    } catch (error) {
+        console.error("Context Error:", error);
+        res.status(500).json({ error: "Failed to fetch context" });
+    }
 });
 
 
