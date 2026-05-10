@@ -41,7 +41,7 @@ router.get('/github',(req:Request,res:Response)=>{
         client_id:process.env.GITHUB_CLIENT_ID || '',
         redirect_uri:'http://localhost:3001/auth/github/callback',
         scope:'repo read:user', //Permissions we need
-        state:'random_secure_string' // should be random in production
+        state:req.query.userId as string // should be random in production
     });
     res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
 });
@@ -49,7 +49,7 @@ router.get('/github',(req:Request,res:Response)=>{
 
 // Router 2: The Callback - GitHub sends the user back here
 router.get('/github/callback',async(req:Request,res:Response)=>{
-    const {code} = req.query;
+    const {code,state:userId} = req.query;
 
     if(!code){
         return res.status(400).send("No code provided from GitHub");
@@ -86,16 +86,12 @@ router.get('/github/callback',async(req:Request,res:Response)=>{
 
         // GET YOUR USER ID : open pgadmin, copy the uuid hardcode it
 
-        const TEMP_USER_ID = "50829cb9-d010-44ae-862a-166f6e54094a";
 
         // save to database
 
-        await saveToken(TEMP_USER_ID,'github',accessToken);
+        await saveToken(userId as string,'github',accessToken);
 
-        res.send(`
-            <h1>✅ Token Saved!</h1>
-            <p>Check pgAdmin 'OAuthToken' table to see it.</p>
-        `);
+        res.send('<h1>GitHub Connected! You can close this.</h1>');
 
     }catch(error){
         console.error("OAuth Error:" , error);
@@ -120,9 +116,14 @@ router.get('/jira', (req, res) => {
     res.redirect(authUrl);
 });
 
+
 // Router 2
 router.get('/jira/callback', async (req, res) => {
     const { code, state } = req.query; // 'state' is the userId we passed above
+
+    if (!code) {
+    return res.status(400).json({ error: "No authorization code provided from Jira." });
+    }
 
     try {
         const response = await axios.post('https://auth.atlassian.com/oauth/token', {

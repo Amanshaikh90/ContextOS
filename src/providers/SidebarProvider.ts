@@ -5,7 +5,14 @@ import { WebviewMessageType, WebviewMessage } from "../types/messaging";
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
 
-  constructor(private readonly _extensionUri: vscode.Uri) {}
+  /**
+   * The constructor now takes the userId generated in extension.ts
+   * This ensures every request to the backend is linked to this specific user.
+   */
+  constructor(
+    private readonly _extensionUri: vscode.Uri,
+    private readonly _userId: string 
+  ) {}
 
   public resolveWebviewView(webviewView: vscode.WebviewView): void {
     this._view = webviewView;
@@ -20,23 +27,46 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._setWebviewMessageListener(webviewView.webview);
   }
 
-  public updateFilename(filename: string): void {
-    this._view?.webview.postMessage({
-      type: WebviewMessageType.FileChanged,
-      file: filename,
-    });
-  }
+  /**
+   * Sends a message to the React frontend (e.g., when a file is changed)
+   */
+  public updateContext(filename: string, folderName: string): void {
+  this._view?.webview.postMessage({
+    type: 'fileChanged',
+    file: filename,
+    folder: folderName, // NEW LOGIC: Pass folder to React
+  });
+}
 
+  /**
+   * Listens for actions coming FROM the React Sidebar
+   */
   private _setWebviewMessageListener(webview: vscode.Webview): void {
-    webview.onDidReceiveMessage(async (data: WebviewMessage) => {
+    webview.onDidReceiveMessage(async (data: any) => {
       try {
         switch (data.type) {
+          // --- AUTHENTICATION TRIGGERS ---
+          case "auth-jira":
+            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/jira?userId=${this._userId}`));
+            break;
+
+          case "auth-github":
+            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/github?userId=${this._userId}`));
+            break;
+
+          case "auth-slack":
+            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/slack?userId=${this._userId}`));
+            break;
+
+          // --- UI FEEDBACK ---
           case WebviewMessageType.Info:
-            if (data.value) vscode.window.showInformationMessage(data.value);
+            if (data.value) {vscode.window.showInformationMessage(data.value);}
             break;
+            
           case WebviewMessageType.Error:
-            if (data.value) vscode.window.showErrorMessage(data.value);
+            if (data.value) {vscode.window.showErrorMessage(data.value);}
             break;
+
           default:
             console.warn(`[contextOS] Unhandled message type: ${data.type}`);
         }
@@ -46,8 +76,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
   }
 
+  /**
+   * Generates the HTML for the sidebar and injects the global bridge variables
+   */
   private _getHtmlForWebview(webview: vscode.Webview): string {
-    console.log("Generating HTML for Webview...");
     const scriptUri = webview.asWebviewUri(
       vscode.Uri.joinPath(this._extensionUri, "dist", "webview.js")
     );
@@ -63,12 +95,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
           img-src ${webview.cspSource} https:;
           script-src 'nonce-${nonce}';
           style-src ${webview.cspSource} 'unsafe-inline';
-          connect-src ${webview.cspSource} http://127.0.0.1:3001;
+          connect-src ${webview.cspSource} http://localhost:3001 http://127.0.0.1:3001;
         ">
         <title>contextOS</title>
       </head>
       <body>
         <div id="root"></div>
+
+        <script nonce="${nonce}">
+          window.userId = "${this._userId}";
+          window.backendUrl = "http://localhost:3001";
+          
+          // Provide a way for React to talk to VS Code logic
+          //const vscode = acquireVsCodeApi();
+          //window.vscode = vscode;
+        </script>
+
         <script nonce="${nonce}" src="${scriptUri}"></script>
       </body>
       </html>`;
