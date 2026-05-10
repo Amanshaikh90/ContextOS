@@ -29,8 +29,23 @@ export const saveToken = async (
     where: {
       userId_provider: { userId, provider }
     },
-    update: { accessToken, refreshToken },
-    create: { userId, provider, accessToken, refreshToken }
+    update: { 
+        accessToken, 
+        refreshToken,
+        
+    },
+    // NECESSARY CHANGE: Use connectOrCreate to satisfy the Foreign Key constraint
+    create: { 
+      provider, 
+      accessToken, 
+      refreshToken,
+      user: {
+        connectOrCreate: {
+          where: { id: userId },
+          create: { id: userId }
+        }
+      }
+    }
   });
 };
 

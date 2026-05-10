@@ -2,53 +2,43 @@ import axios from 'axios';
 
 export const fetchJiraTickets = async (file: string, token: string) => {
     try {
-        // STEP 1: Get the 'cloudId'
-        //  Jira needs a unique ID for the specific workspace (e.g., your-company.atlassian.net)
         const accessibleResources = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
-            }
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
         });
 
-        // Checking user actually has any Jira sites connected
-        if (!accessibleResources.data || accessibleResources.data.length === 0) {
-            console.log("No Jira resources found for this token.");
-            return [];
+        if (!accessibleResources.data || accessibleResources.data.length === 0) return [];
+        const cloudId = accessibleResources.data[0].id;
+        const siteName = accessibleResources.data[0].name;
+
+        // Try searching for the file/folder keyword first
+        let jql = `assignee = currentUser() AND statusCategory != Done`;
+        if (file) {
+            jql = `text ~ "${file}" AND ${jql}`;
         }
 
-        // using the first available site (cloudId)
-        const cloudId = accessibleResources.data[0].id;
-
-        // STEP 2: Fetch Tickets using JQL
-        // using the 'file' parameter to make it context-aware (filtering by filename)
-        const jql = file 
-            ? `text ~ "${file}" AND assignee = currentUser()` 
-            : `assignee = currentUser() AND statusCategory != Done`;
-
-        const response = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search`, {
-            params: {
-                jql: jql,
-                maxResults: 5,
-                fields: "summary,status,updated" // Only get what we need
-            },
-            headers: {
-                'Authorization': `Bearer ${token}`,
-                'Accept': 'application/json'
-            }
+        let response = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search/jql`, {
+            params: { jql, maxResults: 5, fields: "summary,status" },
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
         });
 
-        // STEP 3: Map the data for your VS Code Sidebar
+        // FALLBACK: If 0 results for specific file, show all active tickets
+        if (response.data.issues.length === 0 && file) {
+            const fallbackJql = `assignee = currentUser() AND statusCategory != Done`;
+            response = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search/jql`, {
+                params: { jql: fallbackJql, maxResults: 5, fields: "summary,status" },
+                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+            });
+        }
+
         return response.data.issues.map((issue: any) => ({
             id: issue.key,
             title: issue.fields.summary,
             status: issue.fields.status.name,
-            url: `https://${accessibleResources.data[0].name}.atlassian.net/browse/${issue.key}`
+            url: `https://${siteName}.atlassian.net/browse/${issue.key}`
         }));
-
     } catch (error: any) {
-        // Log the error but return empty array so index.ts doesn't crash
         console.error("Jira API Fetch Error:", error.response?.data || error.message);
         return [];
     }
 };
+

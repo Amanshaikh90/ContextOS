@@ -1,30 +1,26 @@
 import type { WebviewApi } from "vscode-webview";
 
-/**
- * A wrapper for the VS Code API to ensure it's only acquired once.
- */
 class VSCodeAPIWrapper {
   private readonly vsCodeApi: WebviewApi<unknown> | undefined;
 
   constructor() {
     if (typeof acquireVsCodeApi === "function") {
+      // This is now the ONLY place in the whole project where this is called
       this.vsCodeApi = acquireVsCodeApi();
     }
   }
 
-  public postMessage(message: unknown) {
+  public postMessage(message: any) {
     if (this.vsCodeApi) {
       this.vsCodeApi.postMessage(message);
-    } else {
-      console.warn("VS Code API not available. Are you running in a browser?");
     }
   }
 
-  public getState(): unknown {
+  public getState(): any {
     return this.vsCodeApi?.getState();
   }
 
-  public setState(state: unknown) {
+  public setState(state: any) {
     return this.vsCodeApi?.setState(state);
   }
 }

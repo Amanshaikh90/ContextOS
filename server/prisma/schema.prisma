@@ -1,6 +1,6 @@
-
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "darwin", "darwin-arm64"]
 }
 
 datasource db {
@@ -10,7 +10,7 @@ datasource db {
 
 model User {
   id        String       @id @default(uuid())
-  email     String       @unique
+  email     String?      @unique
   createdAt DateTime     @default(now())
   tokens    OAuthToken[]
 }
