@@ -1,5 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { vscode } from './utilities/vscode';
+import {WebviewMessageType} from '../../src/types/messaging'
+
 
 const userId = (window as any).userId;
 const backendUrl = "http://localhost:3001";
@@ -38,7 +40,7 @@ const App: React.FC = () => {
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
-      if (message.type === 'fileChanged') {
+      if (message.type === WebviewMessageType.FileChanged) {
         setActiveFile(message.file || 'Unknown file');
         setActiveFolder(message.folder || '');
       }
@@ -55,6 +57,25 @@ const App: React.FC = () => {
   const startAuth = (service: 'jira' | 'github' | 'slack') => {
     vscode.postMessage({ type: `auth-${service}` });
   };
+
+  const AIInsightCard = () => {
+    if (!data?.aiSummary && !loading) return null;
+
+  return (
+      <div style={aiCardStyle}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
+          <span style={{ fontSize: '10px' }}>✨</span>
+          <h3 style={{ ...sectionHeaderStyle, marginTop: 0, marginBottom: 0, color: 'var(--vscode-button-background)' }}>
+            AI INSIGHT
+          </h3>
+        </div>
+        <p style={{ fontSize: '12px', margin: 0, lineHeight: '1.4', opacity: loading ? 0.5 : 1 }}>
+          {loading ? "Analyzing developer context..." : data?.aiSummary}
+        </p>
+      </div>
+    );
+  };
+  
 
 return (
     <main style={mainStyle}>
@@ -91,10 +112,12 @@ return (
 
       {error && <div style={errorStyle}>⚠️ {error}</div>}
 
+      <AIInsightCard />
+
       <div className="content-area">
         <h3 style={sectionHeaderStyle}>Related GitHub PRs</h3>
         {data?.github?.length > 0 ? data.github.map((pr: any) => (
-          <div key={pr.id} style={itemCardStyle} onClick={() => window.open(pr.url)}>
+          <div key={pr.id} style={itemCardStyle} onClick={()=>{vscode.postMessage({type:'open-external-link',url:pr.url})}}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
               <span style={titleStyle}>{pr.title}</span>
               <span style={pr.status === 'merged' ? mergedBadgeStyle : openBadgeStyle}>
@@ -117,12 +140,30 @@ return (
             <div style={metaStyle}>{issue.id}</div>
           </div>
         )) : <p style={emptyTextStyle}>No tickets found</p>}
+
+        <h3 style={sectionHeaderStyle}>Recent Slack Threads</h3>
+        {data?.slack?.length > 0 ? data.slack.map((thread: any, index: number) => (
+          <div key={index} style={itemCardStyle}>
+            <div style={{ ...titleStyle, whiteSpace: 'normal', display: '-webkit-box', WebkitLineClamp: 2, WebkitBoxOrient: 'vertical' }}>
+              {thread.text}
+            </div>
+              <div style={metaStyle}>Channel: {thread.channel}</div>
+          </div>
+        )) : <p style={emptyTextStyle}>No related discussions</p>}
       </div>
     </main>
   );
 };
 
 // --- STYLES (Matching VS Code Design Language) ---
+
+const aiCardStyle: React.CSSProperties = {
+  backgroundColor: 'var(--vscode-editor-inactiveSelectionBackground)',
+  padding: '10px',
+  borderRadius: '4px',
+  borderLeft: '4px solid var(--vscode-button-background)',
+  marginBottom: '16px',
+};
 
 const mainStyle: React.CSSProperties = {
   padding: '12px',

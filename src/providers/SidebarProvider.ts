@@ -32,7 +32,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
    */
   public updateContext(filename: string, folderName: string): void {
   this._view?.webview.postMessage({
-    type: 'fileChanged',
+    type: WebviewMessageType.FileChanged,
     file: filename,
     folder: folderName, // NEW LOGIC: Pass folder to React
   });
@@ -46,6 +46,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       try {
         switch (data.type) {
           // --- AUTHENTICATION TRIGGERS ---
+          case 'open-external-link':
+            if (data.url && (data.url.startsWith('http') || data.url.startsWith('https'))) {
+              await vscode.commands.executeCommand('vscode.open', vscode.Uri.parse(data.url));
+            } else {
+              vscode.window.showErrorMessage("Invalid URL: Could not open link.");
+            }
+            break;
           case "auth-jira":
             vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/jira?userId=${this._userId}`));
             break;
