@@ -3,6 +3,32 @@ import * as crypto from 'crypto'; // Use standard import for better type support
 import { SidebarProvider } from './providers/SidebarProvider';
 
 
+
+
+async function getRepoFullName(uri: vscode.Uri): Promise<string> {
+    try {
+        const gitExtension = vscode.extensions.getExtension('vscode.git')?.exports;
+        if (!gitExtension) {
+            return '';
+        }
+        const api = gitExtension.getAPI(1);
+        const repo = api.getRepository(uri);
+        
+        if (repo && repo.state.remotes.length > 0) {
+            const fetchUrl = repo.state.remotes[0].fetchUrl || '';
+            // Regex to extract 'username/repo' from SSH or HTTPS URLs
+            const match = fetchUrl.match(/github\.com[/:](.+\/.+?)(?:\.git)?$/);
+            return match ? match[1] : '';
+        }
+    } catch (e) {
+        console.error("Git Repo Detection Error:", e);
+    }
+    return '';
+}
+
+
+
+
 export function activate(context: vscode.ExtensionContext) {
     try {
         // 1. Persistent User ID Management
@@ -26,16 +52,17 @@ export function activate(context: vscode.ExtensionContext) {
         const sidebarProvider = new SidebarProvider(context.extensionUri, userId!);
 
         if (vscode.window.activeTextEditor) {
-            const editor = vscode.window.activeTextEditor;
-            const fileName = editor.document.fileName.split(/[\\/]/).pop() || '';
-            const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
-            const folderName = workspaceFolder ? workspaceFolder.name : '';
-    
-    // We wrap this in a small timeout to ensure the webview is ready
+        const editor = vscode.window.activeTextEditor;
+        const fileName = editor.document.fileName.split(/[\\/]/).pop() || '';
+        const workspaceFolder = vscode.workspace.getWorkspaceFolder(editor.document.uri);
+        const folderName = workspaceFolder ? workspaceFolder.name : '';
+        
+        getRepoFullName(editor.document.uri).then(repoName => {
             setTimeout(() => {
-                sidebarProvider.updateContext(fileName, folderName);
+                sidebarProvider.updateContext(fileName, folderName, repoName);
             }, 1000);
-        }   
+        });
+    }
 
         // 3. Register the Sidebar View
         // CRITICAL: Ensure "contextos.sidebarView" matches the ID in your package.json
@@ -52,7 +79,7 @@ export function activate(context: vscode.ExtensionContext) {
         );
 
         // 4. Global Event Listeners
-        const fileWatcher = vscode.window.onDidChangeActiveTextEditor((editor) => {
+        const fileWatcher = vscode.window.onDidChangeActiveTextEditor(async(editor) => {
     if (editor) {
         const doc = editor.document;
         const fileName = doc.fileName.split(/[\\/]/).pop() || '';
@@ -60,9 +87,10 @@ export function activate(context: vscode.ExtensionContext) {
         // NEW LOGIC: Get the folder/project name
         const workspaceFolder = vscode.workspace.getWorkspaceFolder(doc.uri);
         const folderName = workspaceFolder ? workspaceFolder.name : '';
+        const repoName = await getRepoFullName(doc.uri);
 
         // Change this call to send both
-        sidebarProvider.updateContext(fileName, folderName);
+        sidebarProvider.updateContext(fileName, folderName,repoName);
     }
     });
 

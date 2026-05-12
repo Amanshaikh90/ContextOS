@@ -13,6 +13,8 @@ export const getContext = async (req: Request, res: Response) => {
     try {
         const { file, folder, userId,repo } = req.query;
 
+        const targetRepo = (repo as string)|| "";
+
         if (!userId || typeof userId !== 'string') {
             return res.status(400).json({ error: "User ID is required" });
         }
@@ -66,6 +68,12 @@ export const getContext = async (req: Request, res: Response) => {
                 pineconeService.queryContext(searchVector, 3,repo as string)
         ]);
 
+        const uiPRList = [...github, ...historicalContext];
+
+        const filteredHistorical = historicalContext.filter(match => 
+            match.metadata?.repository === repo
+        );  
+
         const combinedGithub = [
             ...github,
             ...historicalContext.map(match => ({
@@ -75,12 +83,26 @@ export const getContext = async (req: Request, res: Response) => {
             }))
         ];
 
+        const filteredForAI = uiPRList.filter((pr: any) => {
+            const prRepoName = (pr.repo || pr.metadata?.repository || "").toLowerCase();
+            const inputRepo = targetRepo.toLowerCase();
+
+    // SMART MATCH: Returns true if the input is "ChatifyApp" AND the PR is "Amanshaikh90/ChatifyApp"
+    // or if they match exactly.
+            return prRepoName.includes(inputRepo) || inputRepo.includes(prRepoName);
+        });
+
+        const githubDisplayData = (combinedGithub.length === 0 && (!repo || repo === "Unknown Project")) 
+            ? [{ title: "No GitHub repository linked to this local folder.", isError: true }]
+            : combinedGithub;
+
         // 3. Generate the AI summary using the fetched data (even if some are empty)
         const aiSummary = await getAIContextSummary(
             searchTarget,
             jira,
-            combinedGithub,
-            slack 
+            filteredForAI,
+            slack ,
+            targetRepo
         ).catch(err => {
             console.error("AI Summary Generation Error:", err.message);
             return "AI Summary is temporarily unavailable.";
@@ -89,7 +111,7 @@ export const getContext = async (req: Request, res: Response) => {
     
         return res.json({
             project: folder || "Unknown Project",
-            github:combinedGithub,
+            github:githubDisplayData,
             jira, 
             slack,
             aiSummary
