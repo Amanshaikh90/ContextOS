@@ -30,11 +30,12 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   /**
    * Sends a message to the React frontend (e.g., when a file is changed)
    */
-  public updateContext(filename: string, folderName: string): void {
+  public updateContext(filename: string, folderName: string,repoName:string=''): void {
   this._view?.webview.postMessage({
     type: WebviewMessageType.FileChanged,
     file: filename,
     folder: folderName, // NEW LOGIC: Pass folder to React
+    repo:repoName
   });
 }
 

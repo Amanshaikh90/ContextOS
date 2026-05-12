@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { vscode } from './utilities/vscode';
 import {WebviewMessageType} from '../../src/types/messaging'
 
-
 const userId = (window as any).userId;
 const backendUrl = "http://localhost:3001";
 
@@ -12,16 +11,19 @@ const App: React.FC = () => {
   const [data, setData] = useState<any>(null);
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeRepo, setActiveRepo] = useState<string>('');
+  const [manualRepo, setManualRepo] = useState<string>('');
 
   const fetchContext = useCallback(async () => {
     setLoading(true);
     try {
-      const fileParam = (activeFile === 'No file open' || activeFile === 'Unknown file') ? "" : activeFile;
-      const queryParams = new URLSearchParams({
-        userId: userId,
-        file: fileParam,
-        folder: activeFolder
-      });
+      const repoToUse = activeRepo || manualRepo;
+        const queryParams = new URLSearchParams({
+            userId: userId,
+            file: activeFile,
+            folder: activeFolder,
+            repo: repoToUse 
+        });
 
       const response = await fetch(`${backendUrl}/context?${queryParams.toString()}`);
       if (!response.ok) throw new Error(`Server Error: ${response.status}`);
@@ -34,25 +36,26 @@ const App: React.FC = () => {
     } finally {
       setLoading(false);
     }
-  }, [activeFile, activeFolder]);
+  }, [activeFile, activeFolder, activeRepo, manualRepo]);
 
-  // Handle messages from Extension
   useEffect(() => {
     const handleMessage = (event: MessageEvent) => {
       const message = event.data;
       if (message.type === WebviewMessageType.FileChanged) {
         setActiveFile(message.file || 'Unknown file');
         setActiveFolder(message.folder || '');
+        setActiveRepo(message.repo || '');
       }
     };
     window.addEventListener('message', handleMessage);
     return () => window.removeEventListener('message', handleMessage);
   }, []);
 
-  // Auto-fetch when context changes
   useEffect(() => {
-    fetchContext();
-  }, [fetchContext]);
+    if (activeRepo) {
+      fetchContext();
+    }
+  }, [activeFile, activeFolder, activeRepo, fetchContext]);
 
   const startAuth = (service: 'jira' | 'github' | 'slack') => {
     vscode.postMessage({ type: `auth-${service}` });
@@ -61,7 +64,7 @@ const App: React.FC = () => {
   const AIInsightCard = () => {
     if (!data?.aiSummary && !loading) return null;
 
-  return (
+    return (
       <div style={aiCardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
           <span style={{ fontSize: '10px' }}>✨</span>
@@ -75,31 +78,19 @@ const App: React.FC = () => {
       </div>
     );
   };
-  
 
-return (
+  return (
     <main style={mainStyle}>
       <div style={headerStyle}>
         <div>
           <h2 style={{ fontSize: '11px', textTransform: 'uppercase', opacity: 0.8, margin: 0 }}>
             {activeFolder || 'contextOS'}
           </h2>
-          {/* UPDATED: Added visible display for the active file */}
-          <p style={{ 
-            fontSize: '11px', 
-            margin: '2px 0', 
-            fontWeight: 'bold', 
-            color: 'var(--vscode-textLink-foreground)' 
-          }}>
+          <p style={{ fontSize: '11px', margin: '2px 0', fontWeight: 'bold', color: 'var(--vscode-textLink-foreground)' }}>
             📄 {activeFile}
           </p>
         </div>
-        <button 
-          title="Refresh Context" 
-          onClick={fetchContext} 
-          style={refreshBtnStyle}
-          disabled={loading}
-        >
+        <button title="Refresh Context" onClick={fetchContext} style={refreshBtnStyle} disabled={loading}>
           {loading ? "..." : "↻"}
         </button>
       </div>
@@ -111,6 +102,35 @@ return (
       </section>
 
       {error && <div style={errorStyle}>⚠️ {error}</div>}
+
+      {/* FIXED REPO LINK SECTION: Placed directly in main return to maintain input focus */}
+      {activeRepo ? (
+        <div style={{ fontSize: '10px', opacity: 0.7, marginBottom: '10px' }}>
+          ✅ Linked to: <strong>{activeRepo}</strong>
+        </div>
+      ) : (
+        <div style={{ padding: '8px', backgroundColor: 'var(--vscode-badge-background)', borderRadius: '4px', marginBottom: '10px' }}>
+          <p style={{ fontSize: '10px', margin: '0 0 5px 0' }}>No Repo Detected. Link manually:</p>
+          <div style={{ display: 'flex', gap: '4px' }}>
+            <input
+              key="manual-repo-input"
+              style={{ 
+                flex: 1, 
+                minWidth: 0, 
+                fontSize: '11px', 
+                background: 'var(--vscode-input-background)', 
+                color: 'var(--vscode-input-foreground)', 
+                border: '1px solid var(--vscode-panel-border)',
+                boxSizing: 'border-box' // Fixes the box stretching out
+              }}
+              placeholder="username/repo"
+              value={manualRepo}
+              onChange={(e) => setManualRepo(e.target.value)}
+            />
+            <button style={{ ...authBtnStyle, flex: '0 0 auto' }} onClick={fetchContext}>Link</button>
+          </div>
+        </div>
+      )}
 
       <AIInsightCard />
 
@@ -155,8 +175,7 @@ return (
   );
 };
 
-// --- STYLES (Matching VS Code Design Language) ---
-
+// --- STYLES ---
 const aiCardStyle: React.CSSProperties = {
   backgroundColor: 'var(--vscode-editor-inactiveSelectionBackground)',
   padding: '10px',
@@ -180,84 +199,29 @@ const headerStyle: React.CSSProperties = {
 };
 
 const refreshBtnStyle: React.CSSProperties = {
-  background: 'none',
-  border: 'none',
-  color: 'var(--vscode-foreground)',
-  fontSize: '18px',
-  cursor: 'pointer',
-  padding: '4px'
+  background: 'none', border: 'none', color: 'var(--vscode-foreground)', fontSize: '18px', cursor: 'pointer', padding: '4px'
 };
 
 const authBtnStyle: React.CSSProperties = {
-  flex: 1,
-  fontSize: '10px',
-  padding: '4px',
-  cursor: 'pointer',
-  backgroundColor: 'var(--vscode-button-secondaryBackground)',
-  color: 'var(--vscode-button-secondaryForeground)',
-  border: 'none'
+  flex: 1, fontSize: '10px', padding: '4px', cursor: 'pointer', backgroundColor: 'var(--vscode-button-secondaryBackground)', color: 'var(--vscode-button-secondaryForeground)', border: 'none'
 };
 
 const sectionHeaderStyle: React.CSSProperties = {
-  fontSize: '11px',
-  fontWeight: 'bold',
-  marginTop: '20px',
-  marginBottom: '8px',
-  color: 'var(--vscode-descriptionForeground)'
+  fontSize: '11px', fontWeight: 'bold', marginTop: '20px', marginBottom: '8px', color: 'var(--vscode-descriptionForeground)'
 };
 
 const itemCardStyle: React.CSSProperties = {
-  backgroundColor: 'var(--vscode-list-hoverBackground)',
-  padding: '8px',
-  marginBottom: '6px',
-  borderRadius: '4px',
-  cursor: 'pointer',
-  borderLeft: '2px solid var(--vscode-button-background)'
+  backgroundColor: 'var(--vscode-list-hoverBackground)', padding: '8px', marginBottom: '6px', borderRadius: '4px', cursor: 'pointer', borderLeft: '2px solid var(--vscode-button-background)'
 };
 
 const titleStyle: React.CSSProperties = {
-  fontSize: '12px',
-  whiteSpace: 'nowrap',
-  overflow: 'hidden',
-  textOverflow: 'ellipsis',
-  maxWidth: '70%'
+  fontSize: '12px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '70%'
 };
 
-const metaStyle: React.CSSProperties = {
-  fontSize: '10px',
-  opacity: 0.6,
-  marginTop: '4px'
-};
-
-const openBadgeStyle: React.CSSProperties = {
-  fontSize: '9px',
-  padding: '2px 6px',
-  backgroundColor: '#28a745',
-  color: 'white',
-  borderRadius: '10px',
-  height: 'fit-content'
-};
-
-const mergedBadgeStyle: React.CSSProperties = {
-  fontSize: '9px',
-  padding: '2px 6px',
-  backgroundColor: '#6f42c1',
-  color: 'white',
-  borderRadius: '10px',
-  height: 'fit-content'
-};
-
-const emptyTextStyle: React.CSSProperties = {
-  fontSize: '11px',
-  opacity: 0.5,
-  fontStyle: 'italic'
-};
-
-const errorStyle: React.CSSProperties = {
-  color: 'var(--vscode-errorForeground)',
-  fontSize: '11px',
-  padding: '8px',
-  background: 'rgba(255,0,0,0.1)'
-};
+const metaStyle: React.CSSProperties = { fontSize: '10px', opacity: 0.6, marginTop: '4px' };
+const openBadgeStyle: React.CSSProperties = { fontSize: '9px', padding: '2px 6px', backgroundColor: '#28a745', color: 'white', borderRadius: '10px', height: 'fit-content' };
+const mergedBadgeStyle: React.CSSProperties = { fontSize: '9px', padding: '2px 6px', backgroundColor: '#6f42c1', color: 'white', borderRadius: '10px', height: 'fit-content' };
+const emptyTextStyle: React.CSSProperties = { fontSize: '11px', opacity: 0.5, fontStyle: 'italic' };
+const errorStyle: React.CSSProperties = { color: 'var(--vscode-errorForeground)', fontSize: '11px', padding: '8px', background: 'rgba(255,0,0,0.1)' };
 
 export default App;

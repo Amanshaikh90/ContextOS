@@ -32,10 +32,12 @@ export const pineconeService = {
       };
 
       // Add filter if repoName exists
-      if (repoName) {
+      if (repoName && repoName !== "Unknown Project") {
         queryOptions.filter = {
           repository: { "$eq": repoName } 
         };
+      } else {
+        return [];
       }
 
       const results = await index.query(queryOptions);
