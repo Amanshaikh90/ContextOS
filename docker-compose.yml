@@ -1,0 +1,43 @@
+version: "3.8"
+
+services:
+  # 1. Database for user data and metadata
+  postgres:
+    image: postgres:16-alpine
+    container_name: contextos-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: DATABASE_PSWRD
+      POSTGRES_DB: contextos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # 2. Redis for the 60-second context cache
+  redis:
+    image: redis:7-alpine
+    container_name: contextos-cache
+    ports:
+      - "6379:6379"
+
+  # 3. Your Node.js Backend
+  backend:
+    build: ./server # This points to your backend folder
+    container_name: contextos-backend
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    environment:
+      - DATABASE_URL=DATABASE_URL
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - postgres
+      - redis
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+volumes:
+  postgres_data:
