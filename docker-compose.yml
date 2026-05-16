@@ -1,0 +1,52 @@
+version: "3.8"
+
+services:
+  # 1. Database for user data and metadata
+  postgres:
+    image: postgres:16-alpine
+    container_name: contextos-db
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: Qwezxc123$$  # 💡 Double $$ here fixes the Postgres substitution warning/crash
+      POSTGRES_DB: contextos_db
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d contextos_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # 2. Redis for the 60-second context cache
+  redis:
+    image: redis:7-alpine
+    container_name: contextos-cache
+    ports:
+      - "6379:6379"
+
+  # 3. Your Node.js Backend
+  backend:
+    build: ./server
+    container_name: contextos-backend
+    # 💡 CHANGE 1: Force the container to use your Mac's native high-speed internet stack
+    network_mode: "host" 
+    volumes:
+      - ./server:/app
+      - /app/node_modules
+    environment:
+      # 💡 CHANGE 2: Swapped 'postgres' and 'redis' container names for '127.0.0.1' 
+      # Because in host mode, the backend communicates via your Mac's open ports!
+      - DATABASE_URL=postgresql://postgres:Qwezxc123$$@127.0.0.1:5432/contextos_db
+      - REDIS_URL=redis://127.0.0.1:6379
+      - CHOKIDAR_USEPOLLING=1
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    command: sh -c "npx prisma db push && npm run dev"
+
+volumes:
+  postgres_data:

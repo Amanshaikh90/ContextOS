@@ -1,6 +1,28 @@
 import axios from 'axios';
+import { getTokenByUserId, saveToken } from './dbHelper.js';
 
-export const fetchJiraTickets = async (file: string, token: string) => {
+
+
+const refreshJiraToken = async (userId: string, refreshToken: string) => {
+    try {
+        const response = await axios.post('https://auth.atlassian.com/oauth/token', {
+            grant_type: 'refresh_token',
+            client_id: process.env.JIRA_CLIENT_ID,
+            client_secret: process.env.JIRA_CLIENT_SECRET,
+            refresh_token: refreshToken,
+        });
+
+        const { access_token, refresh_token: newRefreshToken } = response.data;
+        // Save the new tokens back to Postgres
+        await saveToken(userId, 'jira', access_token, newRefreshToken);
+        return access_token;
+    } catch (error) {
+        console.error("Failed to refresh Jira token:", error);
+        return null;
+    }
+};
+
+export const fetchJiraTickets = async (file: string, token: string,userId?:string) => {
     try {
         const accessibleResources = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
             headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
@@ -37,6 +59,17 @@ export const fetchJiraTickets = async (file: string, token: string) => {
             url: `https://${siteName}.atlassian.net/browse/${issue.key}`
         }));
     } catch (error: any) {
+        // auto refresh token
+        if(error.response?.status===401&&userId){
+            console.log("jira token expired, attenmpting refresh");
+            const record = await getTokenByUserId(userId,'jira');
+            if(record?.refreshToken){
+                const newToken=await refreshJiraToken(userId,record.refreshToken);
+                if(newToken) {
+                    return fetchJiraTickets(file,newToken,userId);
+                }
+            }
+        }
         console.error("Jira API Fetch Error:", error.response?.data || error.message);
         return [];
     }

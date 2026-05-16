@@ -7,115 +7,108 @@ import { fetchSlackThreads } from '../services/slack.js';
 import { getAIContextSummary } from '../services/ai/ai.service.js';
 import { embeddingService } from '../services/ai/embeddings.service.js';
 import { pineconeService } from '../services/vector/pinecone.service.js';
+import { contextCache } from '../cache.js';
 
 export const getContext = async (req: Request, res: Response) => {
-    console.log("DEBUG: Incoming Request Query ->", req.query);
     try {
-        const { file, folder, userId,repo } = req.query;
-
-        const targetRepo = (repo as string)|| "";
+        const { file, folder, userId, repo, refresh } = req.query;
+        const isRefresh = refresh === 'true';
+        const targetRepo = (repo as string) || "";
 
         if (!userId || typeof userId !== 'string') {
             return res.status(400).json({ error: "User ID is required" });
         }
 
         const searchTarget = (folder as string) || (file as string) || "";
-
         if (!searchTarget.trim()) {
             return res.json({
                 project: "No file open",
-                github: [],
-                jira: [],
-                slack: [],
+                github: [], jira: [], slack: [],
                 aiSummary: "Open a file to see related project context."
             });
         }
+
+        const cacheKey = `context:${userId}:${targetRepo}:${searchTarget}`;
+        const cachedData = await contextCache.getContext(cacheKey);
+
+        if (cachedData && !isRefresh) {
+            return res.json(cachedData);
+        }
         
-        // 1. Fetch all tokens in parallel
-        const [githubRecord, jiraRecord, slackRecord,searchVector] = await Promise.all([
+        // 1. Parallel Fetch: Tokens & The Search Vector (Only once!)
+        const [githubRecord, jiraRecord, slackRecord, searchVector] = await Promise.all([
             getTokenByUserId(userId, 'github'),
             getTokenByUserId(userId, 'jira'),
             getTokenByUserId(userId, 'slack'),
-            embeddingService.generateEmbedding(searchTarget)
-
+            embeddingService.generateEmbedding(searchTarget) // Generated once
         ]);
 
-        
-
-
-        const [github, jira, slack,historicalContext] = await Promise.all([
+        // 2. Parallel Fetch: External APIs + Pinecone
+        const [github, jira, slack, historicalContext] = await Promise.all([
             githubRecord?.accessToken 
-                ? fetchGitHubPRs(searchTarget, githubRecord.accessToken).catch(err => {
-                    console.error("GitHub Fetch Error:", err.message);
-                    return []; // Return empty array so the rest of the app works
-                }) 
+                ? fetchGitHubPRs(searchTarget, githubRecord.accessToken, targetRepo).catch(() => []) 
                 : Promise.resolve([]),
 
             jiraRecord?.accessToken 
-                ? fetchJiraTickets(searchTarget, jiraRecord.accessToken).catch(err => {
-                    console.error("Jira Fetch Error:", err.message);
-                    return [];
-                }) 
+                ? fetchJiraTickets(searchTarget, jiraRecord.accessToken, userId).catch(() => []) 
                 : Promise.resolve([]),
 
             slackRecord?.accessToken 
-                ? fetchSlackThreads(searchTarget, slackRecord.accessToken).catch(err => {
-                    console.error("Slack Fetch Error:", err.message);
-                    return [];
-                }) 
+                ? fetchSlackThreads(searchTarget, slackRecord.accessToken).catch(() => []) 
                 : Promise.resolve([]),
 
-                pineconeService.queryContext(searchVector, 3,repo as string)
+            pineconeService.queryContext(searchVector, 3, targetRepo).catch(() => [])
         ]);
 
-        const uiPRList = [...github, ...historicalContext];
-
-        const filteredHistorical = historicalContext.filter(match => 
-            match.metadata?.repository === repo
-        );  
-
+        // 3. Unify Live + Historical PRs
         const combinedGithub = [
             ...github,
-            ...historicalContext.map(match => ({
+            ...historicalContext.map((match: any) => ({
+                id: match.id,
                 title: match.metadata?.title,
                 url: match.metadata?.url,
-                isHistorical: true // Flag to show it came from Pinecone
+                repo: match.metadata?.repository,
+                status: 'merged', 
+                isHistorical: true 
             }))
         ];
 
-        const filteredForAI = uiPRList.filter((pr: any) => {
-            const prRepoName = (pr.repo || pr.metadata?.repository || "").toLowerCase();
+        // 4. Smart Filter for AI Context
+        const filteredForAI = combinedGithub.filter((pr: any) => {
+            const prRepoName = (pr.repo || "").toLowerCase();
             const inputRepo = targetRepo.toLowerCase();
-
-    // SMART MATCH: Returns true if the input is "ChatifyApp" AND the PR is "Amanshaikh90/ChatifyApp"
-    // or if they match exactly.
             return prRepoName.includes(inputRepo) || inputRepo.includes(prRepoName);
         });
 
-        const githubDisplayData = (combinedGithub.length === 0 && (!repo || repo === "Unknown Project")) 
-            ? [{ title: "No GitHub repository linked to this local folder.", isError: true }]
-            : combinedGithub;
-
-        // 3. Generate the AI summary using the fetched data (even if some are empty)
-        const aiSummary = await getAIContextSummary(
-            searchTarget,
-            jira,
-            filteredForAI,
-            slack ,
-            targetRepo
-        ).catch(err => {
-            console.error("AI Summary Generation Error:", err.message);
-            return "AI Summary is temporarily unavailable.";
-        });
-
-    
-        return res.json({
+        // 5. Handle AI Summary Logic
+        let aiSummary;
+        if (isRefresh && cachedData) {
+            aiSummary = cachedData.aiSummary;
+        } else {
+            try {
+                aiSummary = await getAIContextSummary(
+                    searchTarget,
+                    jira,
+                    filteredForAI, // AI now sees the unified list
+                    slack,
+                    targetRepo
+                );
+            } catch (err) {
+                aiSummary = cachedData?.aiSummary || "Summary unavailable.";
+            }
+        }
+        
+        const responseData = {
             project: folder || "Unknown Project",
-            github:githubDisplayData,
-            jira, 
-            slack,
+            github: combinedGithub.length === 0 && !targetRepo ? 
+                    [{ title: "No repository linked.", isError: true }] : combinedGithub,
+            jira: isRefresh ? (cachedData?.jira || jira) : jira,
+            slack: isRefresh ? (cachedData?.slack || slack) : slack,
             aiSummary
-        });
+        };
+
+        await contextCache.setContext(cacheKey, responseData);
+        return res.json(responseData);
 
     } catch (err) {
         console.error("Critical Context Controller Error:", err);

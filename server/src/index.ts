@@ -1,19 +1,37 @@
 import 'dotenv/config';
 import express from 'express';
 import cors from 'cors';
+import {Redis} from 'ioredis';
 import authRoutes from './routes/auth.js';
 import contextRoutes from './routes/context.js';
 
-const app = express();
 
-app.use(express.json());
+const app = express();
+export const redis = new Redis(process.env.REDIS_URL||'redis://redis:6379');
+
+app.use(express.json({
+  verify: (req: any, res, buf) => {
+    req.rawBody = buf; // Store the raw buffer for signature verification
+  }
+}));
 app.use(cors({origin:'*'}));
+
+redis.on('connect',()=>{
+    console.log('Connected to Redis Cache');
+});
+
+redis.on('error',(err)=>{
+    console.log('Redis Error:', err);
+});
+
 
 
 app.use('/auth', authRoutes);       // /auth/init, /auth/token, /auth/jira, etc.
 app.use('/context', contextRoutes); 
+app.use('/api',contextRoutes);
 
 const PORT = process.env.PORT || 5000;
 app.listen(PORT, () => {
     console.log(`Server running on Port ${PORT}`);
 });
+

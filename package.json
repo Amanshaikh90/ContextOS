@@ -6,6 +6,9 @@
   "engines": {
     "vscode": "^1.116.0"
   },
+  "extensionDependencies": [
+    "vscode.git"
+  ],
   "categories": [
     "Other"
   ],
