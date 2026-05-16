@@ -1,0 +1,908 @@
+--- FILE: server/src/cache.ts ---
+import {redis} from './index.js';
+
+export const contextCache = {
+    setContext: async (key:string,data:any)=>{
+        try{
+            const stringData=JSON.stringify(data);
+
+            await redis.set(key,stringData,'EX',60);
+            console.log(`Context cached for key :${key } (Expires in 60s)`);
+        }catch(error){
+            console.log('Redis Set Error:', error);
+        }
+    },
+
+    getContext:async(key:string)=>{
+        try{
+            const data=await redis.get(key);
+            return data ? JSON.parse(data):null;
+
+        }catch(error){
+            console.error('Redis Get Error:', error);
+            return null;
+        }
+    }
+};--- FILE: server/src/index.ts ---
+import 'dotenv/config';
+import express from 'express';
+import cors from 'cors';
+import {Redis} from 'ioredis';
+import authRoutes from './routes/auth.js';
+import contextRoutes from './routes/context.js';
+
+
+const app = express();
+export const redis = new Redis(process.env.REDIS_URL||'redis://redis:6379');
+
+app.use(express.json({
+  verify: (req: any, res, buf) => {
+    req.rawBody = buf; // Store the raw buffer for signature verification
+  }
+}));
+app.use(cors({origin:'*'}));
+
+redis.on('connect',()=>{
+    console.log('Connected to Redis Cache');
+});
+
+redis.on('error',(err)=>{
+    console.log('Redis Error:', err);
+});
+
+
+
+app.use('/auth', authRoutes);       // /auth/init, /auth/token, /auth/jira, etc.
+app.use('/context', contextRoutes); 
+app.use('/api',contextRoutes);
+
+const PORT = process.env.PORT || 5000;
+app.listen(PORT, () => {
+    console.log(`Server running on Port ${PORT}`);
+});
+
+--- FILE: server/src/controllers/context.controller.ts ---
+// server/src/controllers/context.controller.ts
+import { Request, Response } from 'express';
+import { getTokenByUserId } from '../services/dbHelper.js';
+import { fetchGitHubPRs } from '../services/github.js';
+import { fetchJiraTickets } from '../services/jira.js';
+import { fetchSlackThreads } from '../services/slack.js';
+import { getAIContextSummary } from '../services/ai/ai.service.js';
+import { embeddingService } from '../services/ai/embeddings.service.js';
+import { pineconeService } from '../services/vector/pinecone.service.js';
+import { contextCache } from '../cache.js';
+
+export const getContext = async (req: Request, res: Response) => {
+    console.log("DEBUG: Incoming Request Query ->", req.query);
+    try {
+        const { file, folder, userId,repo,refresh } = req.query;
+        const isRefresh = refresh === 'true';
+
+        const targetRepo = (repo as string)|| "";
+
+        if (!userId || typeof userId !== 'string') {
+            return res.status(400).json({ error: "User ID is required" });
+        }
+
+        const searchTarget = (folder as string) || (file as string) || "";
+
+        if (!searchTarget.trim()) {
+            return res.json({
+                project: "No file open",
+                github: [],
+                jira: [],
+                slack: [],
+                aiSummary: "Open a file to see related project context."
+            });
+        }
+
+        const cacheKey = `context:${userId}:${targetRepo}:${searchTarget}`;
+        const cachedData = await contextCache.getContext(cacheKey);
+
+        if(cachedData&& !isRefresh){
+            console.log("Serving from Redis Cache");
+            return res.json(cachedData);
+        }
+        
+        // 1. Fetch all tokens in parallel
+        const [githubRecord, jiraRecord, slackRecord,searchVector] = await Promise.all([
+            getTokenByUserId(userId, 'github'),
+            getTokenByUserId(userId, 'jira'),
+            getTokenByUserId(userId, 'slack'),
+            embeddingService.generateEmbedding(searchTarget)
+
+        ]);
+
+        
+
+
+        const [github, jira, slack,historicalContext] = await Promise.all([
+            githubRecord?.accessToken 
+                ? fetchGitHubPRs(searchTarget, githubRecord.accessToken,targetRepo).catch(err => {
+                    console.error("GitHub Fetch Error:", err.message);
+                    return []; // Return empty array so the rest of the app works
+                }) 
+                : Promise.resolve([]),
+
+            jiraRecord?.accessToken 
+                ? fetchJiraTickets(searchTarget, jiraRecord.accessToken).catch(err => {
+                    console.error("Jira Fetch Error:", err.message);
+                    return [];
+                }) 
+                : Promise.resolve([]),
+
+            slackRecord?.accessToken 
+                ? fetchSlackThreads(searchTarget, slackRecord.accessToken).catch(err => {
+                    console.error("Slack Fetch Error:", err.message);
+                    return [];
+                }) 
+                : Promise.resolve([]),
+
+                pineconeService.queryContext(searchVector, 3,repo as string)
+        ]);
+
+        const uiPRList = [...github, ...historicalContext];
+
+
+       /* const filteredHistorical = historicalContext.filter((match:any) => 
+            match.metadata?.repository === repo
+        );  */
+
+        
+
+    const combinedGithub = [
+    ...github, // Fresh from GitHub API (Open + recently merged)
+    ...historicalContext.map((match: any) => ({
+        id: match.id,
+        title: match.metadata?.title,
+        url: match.metadata?.url,
+        repo: match.metadata?.repository,
+        status: 'merged', 
+        isHistorical: true 
+    }))
+];
+
+        const filteredForAI = uiPRList.filter((pr: any) => {
+            const prRepoName = (pr.repo || pr.metadata?.repository || "").toLowerCase();
+            const inputRepo = targetRepo.toLowerCase();
+
+    // SMART MATCH: Returns true if the input is "ChatifyApp" AND the PR is "Amanshaikh90/ChatifyApp"
+    // or if they match exactly.
+            return prRepoName.includes(inputRepo) || inputRepo.includes(prRepoName);
+        });
+
+        const githubDisplayData = (combinedGithub.length === 0 && (!repo || repo === "Unknown Project")) 
+            ? [{ title: "No GitHub repository linked to this local folder.", isError: true }]
+            : combinedGithub;
+
+        // 3. Generate the AI summary using the fetched data (even if some are empty)
+    let aiSummary;
+
+    if (isRefresh && cachedData) {
+    // 💡 ISOLATION LOGIC:
+    // We explicitly keep the old AI Summary and old Jira/Slack data 
+    // to ensure the refresh only affects the GitHub PR list visually.
+    aiSummary = cachedData.aiSummary;
+    console.log("⚡ Isolated Refresh: Keeping existing AI Insight.");
+} else {
+    // This only runs on a full refresh (top button) or first load
+    console.log("🤖 Full Refresh: Generating new AI Summary...");
+    try {
+        aiSummary = await getAIContextSummary(
+            searchTarget,
+            jira,
+            filteredForAI,
+            slack,
+            targetRepo
+        );
+    } catch (err) {
+        aiSummary = cachedData?.aiSummary || "Summary unavailable.";
+    }
+}
+        
+        // Store in cache
+    const responseData = {
+    project: folder || "Unknown Project",
+    github: githubDisplayData, // This is fresh from the API
+    jira: isRefresh ? cachedData?.jira : jira, // Keep old Jira if it's just a PR refresh
+    slack: isRefresh ? cachedData?.slack : slack, // Keep old Slack
+    aiSummary
+    };
+
+    
+        
+    await contextCache.setContext(cacheKey, responseData);
+
+    return res.json(responseData);
+
+    } catch (err) {
+        console.error("Critical Context Controller Error:", err);
+        res.status(500).json({ error: "Failed to aggregate context" });
+    }
+};--- FILE: server/src/controllers/webhook.controller.ts ---
+import { Request, Response } from 'express';
+import { contextService } from '../services/context.service.js';
+import crypto from 'crypto';
+
+export const handleGithubWebhook = async (req: Request, res: Response) => {
+  const signature = req.headers['x-hub-signature-256'] as string;
+  const event = req.headers['x-github-event'];
+  const rawBody = (req as any).rawBody;
+
+  
+
+  if (!signature || !rawBody) {
+    console.error("Critical Error: Missing signature header or rawBody buffer.");
+    return res.status(401).send("Unauthorized: Missing Security Data");
+  }
+
+  // 1. Signature Verification
+  // Ensure GITHUB_WEBHOOK_SECRET is the literal string (e.g., ContextOS_Secret123$)
+  const secret = process.env.GITHUB_WEBHOOK_SECRET || '';
+  const hmac = crypto.createHmac('sha256', secret);
+  
+  // Calculate the digest from the raw buffer
+  const calculatedDigest = 'sha256=' + hmac.update(rawBody).digest('hex');
+
+  // Log comparison for manual verification in Docker logs
+  if (signature !== calculatedDigest) {
+    console.error("❌ Invalid Webhook Signature");
+    console.error("Expected from GitHub:  ", signature);
+    console.error("Calculated by Server: ", calculatedDigest);
+    return res.status(401).send("Unauthorized: Invalid Signature");
+  }
+
+  
+
+  try {
+    const payload = req.body;
+
+    // 2. Handle PR updates (For AI context)
+    if (event === 'pull_request') {
+      if (['opened', 'closed', 'reopened'].includes(payload.action)) {
+        await contextService.indexGithubPR(payload.pull_request, payload.repository.full_name);
+      }
+    }
+
+    // 3. Handle App Installations
+    if (event === 'installation') {
+        console.log(`App ${payload.action} by ${payload.sender.login}`);
+    }
+
+    res.status(200).json({ success: true });
+  } catch (error) {
+    console.error("Webhook Logic Error:", error);
+    res.status(500).json({ error: "Internal Server Error" });
+  }
+};--- FILE: server/src/db.ts ---
+import {PrismaClient} from '@prisma/client';
+
+
+const prisma = new PrismaClient();
+
+
+export default prisma;--- FILE: server/src/routes/context.ts ---
+// server/src/routes/context.ts
+import { Router } from 'express';
+import { getContext } from '../controllers/context.controller.js'; // Import the function we just fixed
+import { handleGithubWebhook } from '../controllers/webhook.controller.js';
+
+const router: Router = Router();
+
+router.get('/', getContext);
+router.post('/webhooks/github', handleGithubWebhook);
+
+export default router;--- FILE: server/src/routes/auth.ts ---
+import {Router ,Request,Response} from 'express';
+import {createUser, saveToken} from '../services/dbHelper.js';
+import axios from 'axios';
+
+const router:Router = Router();
+const BASE_URL = process.env.NODE_ENV === 'production' 
+    ? 'https://your-railway-app.up.railway.app' 
+    : 'https://quartered-happening-remedial.ngrok-free.dev';
+
+
+// Init user 
+router.post('/init', async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: "Email is required" });
+    }
+
+    try {
+        const user = await createUser(email);
+        res.json({ success: true, user });
+    } catch (error) {
+        res.status(500).json({ error: "Failed to sync user" });
+    }
+});
+
+// Save token on postgresql
+router.post('/token', async (req, res) => {
+    const { userId, provider, accessToken } = req.body;
+    try {
+        const tokenEntry = await saveToken(userId, provider, accessToken);
+        res.json({ success: true, tokenEntry });
+    } catch (error) {
+        res.status(500).json({ error: "Failed to save token" });
+    }
+});
+
+
+// Route 1: Start the login process
+
+router.get('/github',(req:Request,res:Response)=>{
+    const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
+
+    const params = new URLSearchParams({
+        client_id:process.env.GITHUB_CLIENT_ID || '',
+        redirect_uri:`${BASE_URL}/auth/github/callback`,
+        state:req.query.userId as string // should be random in production
+    });
+    res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
+});
+
+
+// Router 2: The Callback - GitHub sends the user back here
+router.get('/github/callback',async(req:Request,res:Response)=>{
+    const {code,state:userId} = req.query;
+
+    
+
+    if(!code){
+        return res.status(400).send("No code provided from GitHub");
+    }
+
+    const finalUserId = (userId as string) || "dev-test-user-001";
+
+    try{
+
+        // Exchange code for Acces Token
+
+        const tokenResponse = await fetch('https://github.com/login/oauth/access_token',{
+            method:'POST',
+            headers:{
+                'Accept':'application/json',
+                'Content-Type':'application/json'
+            },
+            body:JSON.stringify({
+                client_id:process.env.GITHUB_CLIENT_ID,
+                client_secret:process.env.GITHUB_CLIENT_SECRET,
+                code,
+                redirect_uri: `${BASE_URL}/auth/github/callback`
+            })
+        });
+
+        const data:any = await tokenResponse.json();
+
+        if(data.error){
+            return res.status(400).json(data);
+        }
+
+        const accessToken = data.access_token;
+
+        // NOTE: In a real app, you'd get the userId from a session or JWT.
+        // For now, we are proving the connection works.
+        // await saveToken(some_user_id, 'github', accessToken);
+
+        // GET YOUR USER ID : open pgadmin, copy the uuid hardcode it
+
+
+        // save to database
+
+        await saveToken(finalUserId as string,'github',accessToken);
+
+        res.send('<h1>GitHub Connected! You can close this.</h1>');
+
+    }catch(error){
+        console.error("OAuth Error:" , error);
+        res.status(500).send("Authentication failed");
+    }
+
+});
+
+
+
+
+// Router 1
+router.get('/jira', (req, res) => {
+    const clientId = process.env.JIRA_CLIENT_ID;
+    const redirectUri = encodeURIComponent(process.env.JIRA_CALLBACK_URL!);
+    
+    // Scopes must match what you picked in the dashboard
+    const scopes = encodeURIComponent('read:jira-work read:jira-user');
+
+    const authUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${clientId}&scope=${scopes}&redirect_uri=${redirectUri}&state=${req.query.userId}&response_type=code&prompt=consent`;
+    
+    res.redirect(authUrl);
+});
+
+
+// Router 2
+router.get('/jira/callback', async (req, res) => {
+    const { code, state } = req.query; // 'state' is the userId we passed above
+
+    if (!code) {
+    return res.status(400).json({ error: "No authorization code provided from Jira." });
+    }
+
+    try {
+        const response = await axios.post('https://auth.atlassian.com/oauth/token', {
+            grant_type: 'authorization_code',
+            client_id: process.env.JIRA_CLIENT_ID,
+            client_secret: process.env.JIRA_CLIENT_SECRET,
+            code: code,
+            redirect_uri: process.env.JIRA_CALLBACK_URL
+        });
+
+        const { access_token } = response.data;
+
+        // Save to your PostgreSQL using your existing helper
+        await saveToken(state as string, 'jira', access_token);
+
+        res.send('<h1>Jira Connected Successfully! You can close this window.</h1>');
+    } catch (error) {
+        console.error('Jira OAuth Error:', error);
+        res.status(500).send('Authentication failed');
+    }
+});
+
+
+
+
+// Router 1
+router.get('/slack', (req, res) => {
+    const { userId } = req.query; // Pass this from the frontend/VS Code
+    
+    if (!userId) {
+        return res.status(400).send("userId is required");
+    }
+
+    const params = new URLSearchParams({
+        client_id: process.env.SLACK_CLIENT_ID!,
+        user_scope: 'search:read,channels:read,groups:read', // User-level permissions
+        redirect_uri: process.env.SLACK_CALLBACK_URL!,
+        state: userId as string // Carry the userId through the handshake
+    });
+
+    res.redirect(`https://slack.com/oauth/v2/authorize?${params.toString()}`);
+});
+
+// Router 2
+router.get('/slack/callback', async (req, res) => {
+    const { code, state: userId, error } = req.query;
+
+    if (error) {
+        return res.status(400).send(`Slack Access Denied: ${error}`);
+    }
+
+    try {
+        // Exchange code for Access Token
+        const response = await axios.post('https://slack.com/api/oauth.v2.access', null, {
+            params: {
+                client_id: process.env.SLACK_CLIENT_ID,
+                client_secret: process.env.SLACK_CLIENT_SECRET,
+                code,
+                redirect_uri: process.env.SLACK_CALLBACK_URL
+            }
+        });
+
+        if (!response.data.ok) {
+            throw new Error(response.data.error || "Slack API Error");
+        }
+
+        
+        const accessToken = response.data.authed_user?.access_token;
+
+        if (!accessToken) {
+            throw new Error("No user access token received");
+        }
+
+        // Save to PostgreSQL
+        await saveToken(userId as string, 'slack', accessToken);
+
+        res.send('<h1>Slack Connected! You can return to VS Code.</h1>');
+    } catch (err: any) {
+        console.error("Slack OAuth Error:", err.response?.data || err.message);
+        res.status(500).send("Failed to complete Slack authentication.");
+    }
+});
+
+
+export default router;--- FILE: server/src/services/slack.ts ---
+import { WebClient } from '@slack/web-api';
+
+export const fetchSlackThreads = async (file: string, token: string) => {
+    const slack = new WebClient(token);
+
+    try {
+        const query = file ? `to:me ${file}` : "to:me";
+
+        const result = await slack.search.messages({
+            query: query,
+            count: 5,
+            sort: 'timestamp'
+        });
+
+        const matches = (result.messages?.matches as any[]) || [];
+
+        return matches.map((msg: any) => ({
+            id: msg.ts,
+            channel: msg.channel?.name || "private",
+            text: msg.text,
+            url: msg.permalink
+        }));
+    } catch (error) {
+        console.error("Slack Fetch Error:", error);
+        return []; 
+    }
+};--- FILE: server/src/services/github.ts ---
+// server/src/services/github.ts
+import { Octokit } from '@octokit/rest';
+
+// server/src/services/github.ts
+// server/src/services/github.ts
+export const fetchGitHubPRs = async (file: string, token: string, repoName?: string) => {
+    const octokit = new Octokit({ auth: token });
+    try {
+        const { data: user } = await octokit.users.getAuthenticated();
+        const username = user.login;
+
+        // Construct a query that looks for PRs in YOUR repos, 
+        // filtered by the specific repo name if provided.
+        let query = "";
+        
+        if (repoName && repoName !== "Unknown Project" && repoName.trim() !== "") {
+            // Focus ONLY on the specific repo
+            query = `repo:${username}/${repoName} is:pr`;
+        } else {
+            // Default to all user PRs if no repo is specified
+            query = `user:${username} is:pr`;
+        }
+
+        if (file && !["No file open", ".", "/", ""].includes(file)) {
+            query += ` ${file}`;
+        }
+        console.log("DEBUG: Final GitHub Query ->", query);
+
+        const { data } = await octokit.search.issuesAndPullRequests({
+            q: query,
+            sort: 'updated',
+            order: 'desc',
+            per_page: 20 // Increased to see both open and merged
+        });
+
+        return data.items.map((pr: any) => ({
+            id: pr.number.toString(),
+            title: pr.title,
+            status: pr.pull_request?.merged_at || pr.merged_at ? 'merged' : pr.state,
+            url: pr.html_url,
+            repo: pr.repository_url.split('/').pop() || 'Unknown'
+        }));
+    } catch (error) {
+        console.error("GitHub Fetch Error:", error);
+        return [];
+    }
+};--- FILE: server/src/services/jira.ts ---
+import axios from 'axios';
+
+export const fetchJiraTickets = async (file: string, token: string) => {
+    try {
+        const accessibleResources = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+        });
+
+        if (!accessibleResources.data || accessibleResources.data.length === 0) return [];
+        const cloudId = accessibleResources.data[0].id;
+        const siteName = accessibleResources.data[0].name;
+
+        // Try searching for the file/folder keyword first
+        let jql = `assignee = currentUser() AND statusCategory != Done`;
+        if (file) {
+            jql = `text ~ "${file}" AND ${jql}`;
+        }
+
+        let response = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search/jql`, {
+            params: { jql, maxResults: 5, fields: "summary,status" },
+            headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+        });
+
+        // FALLBACK: If 0 results for specific file, show all active tickets
+        if (response.data.issues.length === 0 && file) {
+            const fallbackJql = `assignee = currentUser() AND statusCategory != Done`;
+            response = await axios.get(`https://api.atlassian.com/ex/jira/${cloudId}/rest/api/3/search/jql`, {
+                params: { jql: fallbackJql, maxResults: 5, fields: "summary,status" },
+                headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
+            });
+        }
+
+        return response.data.issues.map((issue: any) => ({
+            id: issue.key,
+            title: issue.fields.summary,
+            status: issue.fields.status.name,
+            url: `https://${siteName}.atlassian.net/browse/${issue.key}`
+        }));
+    } catch (error: any) {
+        console.error("Jira API Fetch Error:", error.response?.data || error.message);
+        return [];
+    }
+};
+
+--- FILE: server/src/services/dbHelper.ts ---
+import { access } from 'node:fs';
+import prisma from '../db.js';
+
+
+
+
+// CreateUser: Ensure a user exits in our DB
+
+export const createUser = async (email:string)=>{
+    return await prisma.user.upsert({
+        where:{email},
+        update:{}, //if they exists , do nothing
+        create:{email},
+    });
+};
+
+
+
+// saveToken: Stores OAuth keys for GitHub/Slack/Jira
+
+
+export const saveToken = async (
+  userId: string, 
+  provider: string, 
+  accessToken: string, 
+  refreshToken?: string
+) => {
+  return await prisma.oAuthToken.upsert({
+    where: {
+      userId_provider: { userId, provider }
+    },
+    update: { 
+        accessToken, 
+        refreshToken,
+        
+    },
+    // NECESSARY CHANGE: Use connectOrCreate to satisfy the Foreign Key constraint
+    create: { 
+      provider, 
+      accessToken, 
+      refreshToken,
+      user: {
+        connectOrCreate: {
+          where: { id: userId },
+          create: { id: userId }
+        }
+      }
+    }
+  });
+};
+
+
+
+// getTokenByUserId: Retrieves the key when needed
+
+
+export const getTokenByUserId = async (userId:string,provider:string) => {
+    return await prisma.oAuthToken.findUnique({
+        where:{
+            userId_provider:{userId,provider}
+        }
+    });
+};--- FILE: server/src/services/ai/ai.service.ts ---
+import {generateText} from 'ai';
+import {anthropic} from '@ai-sdk/anthropic';
+import {google} from '@ai-sdk/google';
+import { SUMMARIZER_SYSTEM_PROMPT } from './prompts.js';
+import { groq } from '@ai-sdk/groq';
+
+
+
+
+export async function getAIContextSummary(fileName: string, jiraData: any[], prData: any[], slackData: any[],currentRepo: string) {
+    // Check if TOTAL context is zero
+    const hasJira = jiraData && jiraData.length > 0;
+    const hasPRs = prData && prData.length > 0;
+    const hasSlack = slackData && slackData.length > 0;
+
+    if (!hasJira && !hasPRs && !hasSlack) {
+        return "No active Jira tickets, GitHub PRs, or Slack threads found for this file.";
+    }
+
+try {
+        const { text } = await generateText({
+            model: groq('llama-3.3-70b-versatile'),
+            system: SUMMARIZER_SYSTEM_PROMPT,
+            temperature: 0.7, // Higher temperature prevents "same type of answer"
+            prompt: `
+                FILE: ${fileName}
+                REPO: ${currentRepo}
+
+                INPUT DATA:
+                - PRs: ${hasPRs ? JSON.stringify(prData.map(p => p.title)) : 'None'}
+                - JIRA: ${hasJira ? JSON.stringify(jiraData.map(j => ({ id: j.id, title: j.title }))) : 'None'}
+                - SLACK: ${hasSlack ? JSON.stringify(slackData.map(s => s.text).slice(0, 3)) : 'None'}
+
+                TASK: Generate the "Context Briefing" using bullet points for the linked activity. 
+                Ensure it looks clean and readable in a VS Code sidebar.
+        `,
+            abortSignal: AbortSignal.timeout(10000),
+        });
+        return text.trim();
+    } catch (error) {
+        console.error("[AI] Service Error:", error);
+        return "⚠️ Context found, but AI summary failed to generate.";
+    }
+}
+
+
+
+
+
+
+   /*             === PROJECT CONTEXT ===
+                REPOSIITORY: ${currentRepo}
+                ACTIVE FILE: ${fileName}
+
+                === DATA TO ANALYZE ===
+                ${hasPRs ? `FOUND PRs for ${currentRepo}: ${JSON.stringify(prData.map(p => ({ title: p.title })))}` : `No PRs found for this repo.`}
+                ${hasJira ? `FOUND JIRA for ${currentRepo}: ${JSON.stringify(jiraData.map(j => ({ id: j.id, title: j.title })))}` : ''}
+                ${hasSlack ? `FOUND SLACK: ${JSON.stringify(slackData.map(s => ({ text: s.text })))}` : ''}
+
+                === CRITICAL INSTRUCTIONS ===
+                1. Focus ONLY on the repository: ${currentRepo}.
+                2. If "FOUND PRs" is not empty, you MUST mention the PR titles in your summary.
+                3. If no data is found for ${currentRepo}, explain that ${fileName} appears to be in a dormant state in this specific repository.
+                4. NEVER mix context from other repositories.
+
+                */--- FILE: server/src/services/ai/prompts.ts ---
+// server/src/services/ai/prompts.ts
+export const SUMMARIZER_SYSTEM_PROMPT = `
+You are a Technical Lead. Provide a 30-second briefing. 
+
+STRICT FORMAT:
+1. FOCUS: [Sentence] \n\n
+2. JIRA/PR: [List] \n\n
+3. CHATS: [Sentence] \n\n
+4. RISK: [Sentence]
+
+RULES:
+- You MUST put TWO empty lines between each numbered point.
+- Use **bold** for ONLY specific technical names, tickets, or repo names.
+- No conversational filler.
+`;--- FILE: server/src/services/ai/embeddings.service.ts ---
+import { Pinecone } from '@pinecone-database/pinecone';
+
+const pc = new Pinecone({
+  apiKey: process.env.PINECONE_API_KEY!,
+});
+
+export const embeddingService = {
+  async generateEmbedding(text: string): Promise<number[]> {
+    try {
+      // 1. Clean the text
+      const cleanText: string = text.replace(/\n/g, ' ');
+
+      // 2. Generate the embedding
+      const embeddings:any = await pc.inference.embed({
+        model: 'llama-text-embed-v2',
+        inputs: [cleanText],
+        parameters: { 
+          inputType: 'passage', 
+          truncate: 'END' 
+        }
+      });
+
+      // 3. Extract and return the values (OUTSIDE the object literal above)
+      if (!embeddings.data || embeddings.data.length === 0) {
+        throw new Error("Pinecone inference returned no data.");
+      }
+
+      const vector = embeddings.data[0].values;
+
+      // Check if values is possibly undefined (another safety layer)
+      if (!vector) {
+        throw new Error("Embedding values are missing in the response.");
+      }
+
+      return Array.from(vector as number[]);
+
+    } catch (error) {
+      console.error("[Embedding Service] Error:", error);
+      throw new Error("Failed to generate free vector embedding.");
+    }
+  }
+};--- FILE: server/src/services/vector/pinecone.service.ts ---
+import { Pinecone, RecordMetadata } from '@pinecone-database/pinecone';
+
+const pc = new Pinecone({
+  apiKey: process.env.PINECONE_API_KEY!,
+});
+
+const indexName = process.env.PINECONE_INDEX_NAME!;
+const index = pc.index<RecordMetadata>(indexName);
+
+export const pineconeService = {
+  async upsertContext(id: string, vector: number[], metadata: RecordMetadata) {
+    try {
+      await index.upsert({
+        records: [{
+          id,
+          values: vector,
+          metadata
+        }]
+      });
+    } catch (error) {
+      console.error("[Pinecone Service] Upsert Error:", error);
+    }
+  },
+
+  async queryContext(vector: number[], topK: number = 5, repoName?: string) {
+    try {
+      // Create the query object
+      const queryOptions: any = {
+        vector: vector,
+        topK: topK,
+        includeMetadata: true,
+      };
+
+      // Add filter if repoName exists
+      if (repoName && repoName !== "Unknown Project") {
+        queryOptions.filter = {
+          repository: { "$eq": repoName } 
+        };
+      } else {
+        return [];
+      }
+
+      const results = await index.query(queryOptions);
+      return results.matches;
+    } catch (error) {
+      console.error("[Pinecone Service] Query Error:", error);
+      return [];
+    }
+  }
+};--- FILE: server/src/services/context.service.ts ---
+import { RecordMetadata } from "@pinecone-database/pinecone";
+import { embeddingService } from "./ai/embeddings.service.js";
+import { title } from "node:process";
+import { pineconeService } from "./vector/pinecone.service.js";
+
+
+
+export const contextService = {
+    async indexGithubPR(prData:any,repoName:string){
+        try{
+
+            // preparing text for ai
+            const content = `PR Title: ${prData.title}. Description:${prData.body || 'No description'}`;
+
+            // convert to vector
+            const vector = await embeddingService.generateEmbedding(content);
+
+            // Define metadata // doubt why we are doing this
+            // got it , we are doing this for using the data for later 
+            const metadata: RecordMetadata = {
+                id:prData.id.toString(),
+                type:'pull_request',
+                title:prData.title,
+                url:prData.html_url,
+                repository:repoName,
+
+            };
+
+            // saving to pinecone
+
+            await pineconeService.upsertContext(`pr-${prData.id}`,vector,metadata);
+            console.log(`[Context Service] Successfully indexed PR:${prData.title}`);
+
+        }catch(error){
+            console.error("[Context Service] Indexing Error:",error);
+            throw error;
+        }
+    }
+}

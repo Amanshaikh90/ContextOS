@@ -6,6 +6,6 @@ import { handleGithubWebhook } from '../controllers/webhook.controller.js';
 const router: Router = Router();
 
 router.get('/', getContext);
-router.post('/webhook/github', handleGithubWebhook);
+router.post('/webhooks/github', handleGithubWebhook);
 
 export default router;

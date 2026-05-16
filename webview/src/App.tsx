@@ -14,7 +14,7 @@ const App: React.FC = () => {
   const [activeRepo, setActiveRepo] = useState<string>('');
   const [manualRepo, setManualRepo] = useState<string>('');
 
-  const fetchContext = useCallback(async () => {
+  const fetchContext = useCallback(async (force = false) => {
     setLoading(true);
     try {
       const repoToUse = activeRepo || manualRepo;
@@ -22,7 +22,8 @@ const App: React.FC = () => {
             userId: userId,
             file: activeFile,
             folder: activeFolder,
-            repo: repoToUse 
+            repo: repoToUse ,
+            refresh:force ? 'true' : 'false'
         });
 
       const response = await fetch(`${backendUrl}/context?${queryParams.toString()}`);
@@ -64,17 +65,38 @@ const App: React.FC = () => {
   const AIInsightCard = () => {
     if (!data?.aiSummary && !loading) return null;
 
+    // Helper function to convert **text** into <strong>tags
+    const formatSummary = (text: string) => {
+      if (!text) return "";
+      const parts = text.split(/(\*\*.*?\*\*)/g);
+      return parts.map((part, index) => {
+        if (part.startsWith("**") && part.endsWith("**")) {
+          return <strong key={index} style={{ color: 'var(--vscode-foreground)' }}>{part.slice(2, -2)}</strong>;
+        }
+        return part;
+      });
+    };
+
     return (
       <div style={aiCardStyle}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '4px' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' }}>
           <span style={{ fontSize: '10px' }}>✨</span>
           <h3 style={{ ...sectionHeaderStyle, marginTop: 0, marginBottom: 0, color: 'var(--vscode-button-background)' }}>
             AI INSIGHT
           </h3>
         </div>
-        <p style={{ fontSize: '12px', margin: 0, lineHeight: '1.4', opacity: loading ? 0.5 : 1 }}>
-          {loading ? "Analyzing developer context..." : data?.aiSummary}
-        </p>
+        <div style={{ 
+          fontSize: '12px', 
+          margin: 0, 
+          lineHeight: '1.8', // for spacing
+          opacity: loading ? 0.5 : 1,
+          whiteSpace: 'pre-wrap', //line break
+          wordBreak:'break-word',
+          overflowWrap:'anywhere',
+          color: 'var(--vscode-descriptionForeground)'
+        }}>
+          {loading ? "Analyzing developer context..." : formatSummary(data?.aiSummary)}
+        </div>
       </div>
     );
   };
@@ -90,7 +112,7 @@ const App: React.FC = () => {
             📄 {activeFile}
           </p>
         </div>
-        <button title="Refresh Context" onClick={fetchContext} style={refreshBtnStyle} disabled={loading}>
+        <button title="Refresh Context" onClick={() => fetchContext(false)} style={refreshBtnStyle} disabled={loading}>
           {loading ? "..." : "↻"}
         </button>
       </div>
@@ -127,19 +149,42 @@ const App: React.FC = () => {
               value={manualRepo}
               onChange={(e) => setManualRepo(e.target.value)}
             />
-            <button style={{ ...authBtnStyle, flex: '0 0 auto' }} onClick={fetchContext}>Link</button>
+            <button style={{ ...authBtnStyle, flex: '0 0 auto' }} onClick={() => fetchContext()}>Link</button>
           </div>
         </div>
       )}
 
       <AIInsightCard />
 
-      <div className="content-area">
-        <h3 style={sectionHeaderStyle}>Related GitHub PRs</h3>
+      <div className="content-area" style={{ maxHeight: '60vh', overflowY: 'auto', paddingRight: '4px' }}>
+        
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '20px', marginBottom: '8px' }}>
+          <h3 style={{ ...sectionHeaderStyle, marginTop: 0, marginBottom: 0 }}>Related GitHub PRs</h3>
+          <button 
+            onClick={() => fetchContext(true)} 
+            title="Refresh PRs"
+            style={{
+              background: 'none',
+              border: 'none',
+              color: 'var(--vscode-foreground)',
+              opacity: 0.5,
+              cursor: 'pointer',
+              fontSize: '12px',
+              padding: '0 4px'
+            }}
+          >
+            {loading ? "..." : "↻"}
+          </button>
+        </div>
+
         {data?.github?.length > 0 ? data.github.map((pr: any) => (
-          <div key={pr.id} style={itemCardStyle} onClick={()=>{vscode.postMessage({type:'open-external-link',url:pr.url})}}>
+          <div key={pr.id} style={{...itemCardStyle, borderLeft:`3px solid ${pr.status==='merged' ? '#6f42c1' : '#28a745'}`}} onClick={()=>{vscode.postMessage({type:'open-external-link',url:pr.url})}}>
             <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-              <span style={titleStyle}>{pr.title}</span>
+              <span style={{
+                ...titleStyle,
+                textDecoration: pr.status === 'merged' ? 'line-through' : 'none',
+                opacity: pr.status === 'merged' ? 0.7 : 1
+              }}>{pr.title}</span>
               <span style={pr.status === 'merged' ? mergedBadgeStyle : openBadgeStyle}>
                 {pr.status}
               </span>
@@ -147,6 +192,7 @@ const App: React.FC = () => {
             <div style={metaStyle}>repo: {pr.repo}</div>
           </div>
         )) : <p style={emptyTextStyle}>No PRs found</p>}
+
 
         <h3 style={sectionHeaderStyle}>Related Jira Issues</h3>
         {data?.jira?.length > 0 ? data.jira.map((issue: any) => (
@@ -159,8 +205,8 @@ const App: React.FC = () => {
             </div>
             <div style={metaStyle}>{issue.id}</div>
           </div>
-        )) : <p style={emptyTextStyle}>No tickets found</p>}
-
+        )) : <p style={emptyTextStyle}>No related tickets found</p>}
+  
         <h3 style={sectionHeaderStyle}>Recent Slack Threads</h3>
         {data?.slack?.length > 0 ? data.slack.map((thread: any, index: number) => (
           <div key={index} style={itemCardStyle}>
@@ -178,7 +224,7 @@ const App: React.FC = () => {
 // --- STYLES ---
 const aiCardStyle: React.CSSProperties = {
   backgroundColor: 'var(--vscode-editor-inactiveSelectionBackground)',
-  padding: '10px',
+  padding: '12px 15px',
   borderRadius: '4px',
   borderLeft: '4px solid var(--vscode-button-background)',
   marginBottom: '16px',
@@ -187,7 +233,9 @@ const aiCardStyle: React.CSSProperties = {
 const mainStyle: React.CSSProperties = {
   padding: '12px',
   color: 'var(--vscode-foreground)',
-  fontFamily: 'var(--vscode-font-family)'
+  fontFamily: 'var(--vscode-font-family)',
+  width:'100%',
+  boxSizing:'border-box'
 };
 
 const headerStyle: React.CSSProperties = {

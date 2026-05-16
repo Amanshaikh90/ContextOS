@@ -1,37 +1,44 @@
+// server/src/services/github.ts
 import { Octokit } from '@octokit/rest';
 
-export const fetchGitHubPRs = async (file: string, token: string) => {
+// server/src/services/github.ts
+// server/src/services/github.ts
+export const fetchGitHubPRs = async (file: string, token: string, repoName?: string) => {
     const octokit = new Octokit({ auth: token });
     try {
-        // If there's a file/folder, we search for that keyword in your PRs.
-        // Otherwise, we just list your most recent open PRs.
-        const query = file 
-            ? `is:pr author:@me state:open ${file}` 
-            : 'is:pr author:@me state:open';
+        const { data: user } = await octokit.users.getAuthenticated();
+        const username = user.login;
+
+        // Construct a query that looks for PRs in YOUR repos, 
+        // filtered by the specific repo name if provided.
+        let query = "";
+        
+        if (repoName && repoName !== "Unknown Project" && repoName.trim() !== "") {
+            // Focus ONLY on the specific repo
+            query = `repo:${username}/${repoName} is:pr`;
+        } else {
+            // Default to all user PRs if no repo is specified
+            query = `user:${username} is:pr`;
+        }
+
+        if (file && !["No file open", ".", "/", ""].includes(file)) {
+            query += ` ${file}`;
+        }
+        console.log("DEBUG: Final GitHub Query ->", query);
 
         const { data } = await octokit.search.issuesAndPullRequests({
             q: query,
-            sort: 'updated', // Sort by recent activity
+            sort: 'updated',
             order: 'desc',
-            per_page: 10
+            per_page: 20 // Increased to see both open and merged
         });
 
-        // FALLBACK: If specific search returns 0, get general active PRs
-        if (data.items.length === 0 && file) {
-            const general = await octokit.search.issuesAndPullRequests({
-                q: 'is:pr author:@me state:open',
-                sort: 'updated',
-                per_page: 5
-            });
-            data.items = general.data.items;
-        }
-
-        return data.items.map(pr => ({
+        return data.items.map((pr: any) => ({
             id: pr.number.toString(),
             title: pr.title,
-            status: pr.state,
+            status: pr.pull_request?.merged_at || pr.merged_at ? 'merged' : pr.state,
             url: pr.html_url,
-            repo: pr.repository_url.split('/').pop()
+            repo: pr.repository_url.split('/').pop() || 'Unknown'
         }));
     } catch (error) {
         console.error("GitHub Fetch Error:", error);

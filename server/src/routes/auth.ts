@@ -3,6 +3,9 @@ import {createUser, saveToken} from '../services/dbHelper.js';
 import axios from 'axios';
 
 const router:Router = Router();
+const BASE_URL = process.env.NODE_ENV === 'production' 
+    ? 'https://your-railway-app.up.railway.app' 
+    : 'https://quartered-happening-remedial.ngrok-free.dev';
 
 
 // Init user 
@@ -39,8 +42,7 @@ router.get('/github',(req:Request,res:Response)=>{
 
     const params = new URLSearchParams({
         client_id:process.env.GITHUB_CLIENT_ID || '',
-        redirect_uri:'http://localhost:3001/auth/github/callback',
-        scope:'repo read:user', //Permissions we need
+        redirect_uri:`${BASE_URL}/auth/github/callback`,
         state:req.query.userId as string // should be random in production
     });
     res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
@@ -51,9 +53,13 @@ router.get('/github',(req:Request,res:Response)=>{
 router.get('/github/callback',async(req:Request,res:Response)=>{
     const {code,state:userId} = req.query;
 
+    
+
     if(!code){
         return res.status(400).send("No code provided from GitHub");
     }
+
+    const finalUserId = (userId as string) || "dev-test-user-001";
 
     try{
 
@@ -68,7 +74,8 @@ router.get('/github/callback',async(req:Request,res:Response)=>{
             body:JSON.stringify({
                 client_id:process.env.GITHUB_CLIENT_ID,
                 client_secret:process.env.GITHUB_CLIENT_SECRET,
-                code
+                code,
+                redirect_uri: `${BASE_URL}/auth/github/callback`
             })
         });
 
@@ -89,7 +96,7 @@ router.get('/github/callback',async(req:Request,res:Response)=>{
 
         // save to database
 
-        await saveToken(userId as string,'github',accessToken);
+        await saveToken(finalUserId as string,'github',accessToken);
 
         res.send('<h1>GitHub Connected! You can close this.</h1>');
 
