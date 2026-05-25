@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     /* File Layout */
+    "rootDir": "./src", 
     "outDir": "./dist",
 
     /* Environment Settings */
@@ -28,5 +29,5 @@
     "sourceMap": true,
     "declaration": true
   },
-  "include": ["src/**/*", "prisma.config.ts"]
+  "include": ["src/**/*"]             // Clean and isolated to your source files!
 }
