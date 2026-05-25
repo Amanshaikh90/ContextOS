@@ -32,6 +32,12 @@
           "type": "webview",
           "id": "contextos.sidebarView",
           "name": "Project Insight"
+        },
+        {
+          "type": "tree",
+          "id": "contextos.prBadge",
+          "name": "PR Count",
+          "when": "false"
         }
       ]
     },
@@ -63,6 +69,7 @@
     "@types/react-dom": "^19.2.3",
     "@types/vscode": "^1.116.0",
     "@types/vscode-webview": "^1.57.5",
+    "@types/ws": "^8.18.1",
     "@vscode/test-cli": "^0.0.12",
     "@vscode/test-electron": "^2.5.2",
     "esbuild": "^0.27.3",
@@ -74,6 +81,7 @@
   },
   "dependencies": {
     "react": "^19.2.6",
-    "react-dom": "^19.2.6"
+    "react-dom": "^19.2.6",
+    "ws": "^8.21.0"
   }
 }

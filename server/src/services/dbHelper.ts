@@ -11,13 +11,36 @@ const encrypt = (text: string) => {
     const cipher = crypto.createCipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
     let encrypted = cipher.update(text);
     encrypted = Buffer.concat([encrypted, cipher.final()]);
-    return iv.toString('hex') + ':' + encrypted.toString('hex');
+    return iv.toString('hex') + '---' + encrypted.toString('hex');
 };
 
-const decrypt = (text: string) => {
-    const textParts = text.split(':');
-    const iv = Buffer.from(textParts.shift()!, 'hex');
-    const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+export const decrypt = (text: string) => {
+    if (!text.includes('---')) {
+        // Fallback trace safety check for old legacy database strings split by colons
+        const textParts = text.split(':');
+        const ivPart = textParts.shift();
+        
+        if (!ivPart) {
+            throw new Error("[Crypto] Decryption failed: Malformed legacy token layout.");
+        }
+        
+        const iv = Buffer.from(ivPart, 'hex');
+        const encryptedText = Buffer.from(textParts.join(':'), 'hex');
+        const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
+        let decrypted = decipher.update(encryptedText);
+        return Buffer.concat([decrypted, decipher.final()]).toString();
+    }
+
+    // 💡 Fix: Destructure with explicit fallback defaults to guarantee string type
+    const [ivHex, encryptedHex] = text.split('---');
+
+    if (!ivHex || !encryptedHex) {
+        throw new Error("[Crypto] Decryption failed: Malformed token layout missing signature bounds.");
+    }
+
+    const iv = Buffer.from(ivHex, 'hex');
+    const encryptedText = Buffer.from(encryptedHex, 'hex');
+    
     const decipher = crypto.createDecipheriv('aes-256-cbc', Buffer.from(ENCRYPTION_KEY), iv);
     let decrypted = decipher.update(encryptedText);
     decrypted = Buffer.concat([decrypted, decipher.final()]);

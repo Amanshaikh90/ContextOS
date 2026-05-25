@@ -1,39 +1,36 @@
+// server/src/services/context.service.ts
 import { RecordMetadata } from "@pinecone-database/pinecone";
 import { embeddingService } from "./ai/embeddings.service.js";
-import { title } from "node:process";
 import { pineconeService } from "./vector/pinecone.service.js";
 
-
-
 export const contextService = {
-    async indexGithubPR(prData:any,repoName:string){
-        try{
+    async indexGithubPR(prData: any, repoName: string,userId:string) {
+        try {
+            // Clean out line breaks and prepare text for vector matching
+            const content = `PR Title: ${prData.title || ''}. Description: ${prData.body || 'No description'}`;
 
-            // preparing text for ai
-            const content = `PR Title: ${prData.title}. Description:${prData.body || 'No description'}`;
-
-            // convert to vector
+            // Convert to mathematical coordinates 
             const vector = await embeddingService.generateEmbedding(content);
 
-            // Define metadata // doubt why we are doing this
-            // got it , we are doing this for using the data for later 
+            // Structure meta blocks for fast filtering later on
             const metadata: RecordMetadata = {
-                id:prData.id.toString(),
-                type:'pull_request',
-                title:prData.title,
-                url:prData.html_url,
-                repository:repoName,
-
+                id: (prData.id || prData.number || Math.random()).toString(),
+                type: 'pull_request',
+                title: prData.title || "Untitled Pull Request",
+                url: prData.html_url || "#",
+                repository: repoName.trim().toLowerCase(), // "amanshalkh90/chatifyapp"
+                short_repo: repoName.includes('/') ? repoName.split('/').pop()!.trim().toLowerCase() : repoName.trim().toLowerCase(),
+                ownerId: userId.toString()
             };
 
-            // saving to pinecone
-
-            await pineconeService.upsertContext(`pr-${prData.id}`,vector,metadata);
-            console.log(`[Context Service] Successfully indexed PR:${prData.title}`);
-
-        }catch(error){
-            console.error("[Context Service] Indexing Error:",error);
-            throw error;
+            // Upsert safely with a predictable ID format
+            const uniqueId = `pr-${prData.id || prData.number || Date.now()}`;
+            await pineconeService.upsertContext(uniqueId, vector, metadata);
+            
+            console.log(`[Context Service] Successfully indexed PR: ${prData.title}`);
+        } catch (error) {
+            // Log the error but do not re-throw it to prevent crashing the webhook response pool
+            console.error("[Context Service] Indexing Bypassed:", error);
         }
     }
-}
+};

@@ -4,6 +4,8 @@ import cors from 'cors';
 import {Redis} from 'ioredis';
 import authRoutes from './routes/auth.js';
 import contextRoutes from './routes/context.js';
+import http from 'http';
+import { setupWebSocketServer } from './services/socket.js';
 
 
 const app = express();
@@ -31,7 +33,9 @@ app.use('/context', contextRoutes);
 app.use('/api',contextRoutes);
 
 const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => {
-    console.log(`Server running on Port ${PORT}`);
+
+const server = app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`Server running on Port ${PORT}`);
 });
+setupWebSocketServer(server);
 

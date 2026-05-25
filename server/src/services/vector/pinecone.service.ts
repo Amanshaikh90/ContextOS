@@ -1,50 +1,61 @@
+// server/src/services/vector/pinecone.service.ts
 import { Pinecone, RecordMetadata } from '@pinecone-database/pinecone';
 
 const pc = new Pinecone({
-  apiKey: process.env.PINECONE_API_KEY!,
+  apiKey: process.env.PINECONE_API_KEY || 'mock-key-for-safety',
 });
 
-const indexName = process.env.PINECONE_INDEX_NAME!;
-const index = pc.index<RecordMetadata>(indexName);
+const indexName = process.env.PINECONE_INDEX_NAME || '';
 
 export const pineconeService = {
   async upsertContext(id: string, vector: number[], metadata: RecordMetadata) {
+    if (!indexName) {
+      console.warn("⚠️ PINECONE_INDEX_NAME is missing. Skipping vector persistence.");
+      return;
+    }
     try {
+      const index = pc.index<RecordMetadata>(indexName);
       await index.upsert({
-        records: [{
-          id,
-          values: vector,
-          metadata
-        }]
+        records: [{ id, values: vector, metadata }]
       });
     } catch (error) {
       console.error("[Pinecone Service] Upsert Error:", error);
     }
   },
 
-  async queryContext(vector: number[], topK: number = 5, repoName?: string) {
+  async queryContext(vector: number[], topK: number = 5, repoName?: string,userId?:string) {
+    // Escape cleanly if something goes wrong with the index configurations
+    if (!vector || vector.length === 0 || !indexName) {
+      return [];
+    }
+
     try {
-      // Create the query object
+      const index = pc.index<RecordMetadata>(indexName);
       const queryOptions: any = {
         vector: vector,
         topK: topK,
         includeMetadata: true,
       };
 
-      // Add filter if repoName exists
-      if (repoName && repoName !== "Unknown Project") {
+      // Smart filter: only restrict query matches if a valid repo is specified
+      if (repoName && repoName.trim() !== "" && repoName !== "Unknown Project" && userId) {
+        const cleanRepo = repoName.trim().toLowerCase();
+        
         queryOptions.filter = {
-          repository: { "$eq": repoName } 
+          "$and": [
+            { ownerId: { "$eq": userId.toString() } },
+            cleanRepo.includes('/')
+              ? { repository: { "$eq": cleanRepo } }
+              : { short_repo: { "$eq": cleanRepo } }
+          ]
         };
-      } else {
-        return [];
       }
 
       const results = await index.query(queryOptions);
-      return results.matches;
+      return results.matches || [];
     } catch (error) {
-      console.error("[Pinecone Service] Query Error:", error);
-      return [];
+      console.error("[Pinecone Service] Query Catch Recovered:", error);
+      return []; // Always return an array to prevent 500 breaks downstream
     }
   }
 };
