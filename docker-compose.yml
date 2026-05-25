@@ -7,7 +7,7 @@ services:
     container_name: contextos-db
     environment:
       POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: Qwezxc123$$  # 💡 Double $$ here fixes the Postgres substitution warning/crash
+      POSTGRES_PASSWORD: Qwezxc123$$
       POSTGRES_DB: contextos_db
     ports:
       - "5432:5432"
@@ -30,16 +30,21 @@ services:
   backend:
     build: ./server
     container_name: contextos-backend
-    # 💡 CHANGE 1: Force the container to use your Mac's native high-speed internet stack
-    network_mode: "host" 
+    # 💡 FIX: Removed network_mode: "host" and added explicit port forwarding for Mac
+    ports:
+      - "3001:3001"
     volumes:
       - ./server:/app
       - /app/node_modules
+
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
     environment:
-      # 💡 CHANGE 2: Swapped 'postgres' and 'redis' container names for '127.0.0.1' 
-      # Because in host mode, the backend communicates via your Mac's open ports!
-      - DATABASE_URL=postgresql://postgres:Qwezxc123$$@127.0.0.1:5432/contextos_db
-      - REDIS_URL=redis://127.0.0.1:6379
+      # 💡 FIX: Pointing variables back to internal container hostnames instead of 127.0.0.1
+      - DATABASE_URL=postgresql://postgres:Qwezxc123$$@postgres:5432/contextos_db?schema=public
+      - REDIS_URL=redis://redis:6379
       - CHOKIDAR_USEPOLLING=1
     depends_on:
       postgres:

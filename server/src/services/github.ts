@@ -1,47 +1,73 @@
-// server/src/services/github.ts
 import { Octokit } from '@octokit/rest';
 
-// server/src/services/github.ts
-// server/src/services/github.ts
 export const fetchGitHubPRs = async (file: string, token: string, repoName?: string) => {
     const octokit = new Octokit({ auth: token });
     try {
-        const { data: user } = await octokit.users.getAuthenticated();
-        const username = user.login;
-
-        // Construct a query that looks for PRs in YOUR repos, 
-        // filtered by the specific repo name if provided.
-        let query = "";
+        let query = "is:pr author:@me"; // Safe default for all tokens
+        let hasSpecificRepo = false;
         
         if (repoName && repoName !== "Unknown Project" && repoName.trim() !== "") {
-            // Focus ONLY on the specific repo
-            query = `repo:${username}/${repoName} is:pr`;
-        } else {
-            // Default to all user PRs if no repo is specified
-            query = `user:${username} is:pr`;
+            const cleanRepo = repoName.trim();
+            hasSpecificRepo = true;
+            
+            if (cleanRepo.includes('/')) {
+                query = `repo:${cleanRepo} is:pr`;
+            } else {
+                query = `user:@me repo:${cleanRepo} is:pr`;
+            }
         }
 
-        if (file && !["No file open", ".", "/", ""].includes(file)) {
-            query += ` ${file}`;
-        }
-        console.log("DEBUG: Final GitHub Query ->", query);
+        console.log("DEBUG: Running GitHub Query ->", query);
 
         const { data } = await octokit.search.issuesAndPullRequests({
             q: query,
             sort: 'updated',
             order: 'desc',
-            per_page: 20 // Increased to see both open and merged
+            per_page: 20
         });
 
-        return data.items.map((pr: any) => ({
-            id: pr.number.toString(),
-            title: pr.title,
-            status: pr.pull_request?.merged_at || pr.merged_at ? 'merged' : pr.state,
-            url: pr.html_url,
-            repo: pr.repository_url.split('/').pop() || 'Unknown'
-        }));
+        const safeTargetRepo = (repoName || "").trim().toLowerCase();
+        const targetRepoNameOnly = safeTargetRepo.includes('/') ? safeTargetRepo.split('/').pop() : safeTargetRepo;
+
+        return data.items.map((pr: any) => {
+            // 💡 FIXED: Use explicit repository matching from GitHub's search payload metadata fields
+            let parsedRepoName = 'Unknown';
+            
+            if (pr.repository?.full_name) {
+                parsedRepoName = pr.repository.full_name;
+            } else if (pr.repository_url) {
+                const urlParts = pr.repository_url.split('/');
+                parsedRepoName = urlParts.length >= 2 
+                    ? `${urlParts[urlParts.length - 2]}/${urlParts[urlParts.length - 1]}` 
+                    : 'Unknown';
+            }
+
+            return {
+                id: pr.number.toString(),
+                title: pr.title,
+                status: pr.pull_request?.merged_at || pr.merged_at ? 'merged' : pr.state,
+                url: pr.html_url,
+                repo: parsedRepoName
+            };
+        })
+        .filter((pr: any) => {
+            if (!hasSpecificRepo) {
+                return true; 
+            }
+
+            const cleanPRRepo = pr.repo.trim().toLowerCase();
+            const shortPRRepo = cleanPRRepo.includes('/') ? cleanPRRepo.split('/').pop() : cleanPRRepo;
+
+            // 💡 FIXED: Fallback safety checklist - if the PR came from this explicit repository query, don't drop it
+            if (cleanPRRepo === "unknown" && hasSpecificRepo) {
+                return true;
+            }
+
+            return cleanPRRepo === safeTargetRepo || shortPRRepo === targetRepoNameOnly;
+        });
+        
     } catch (error) {
-        console.error("GitHub Fetch Error:", error);
-        return [];
+        console.error("GitHub Core Fetch Failure:", error);
+        return []; 
     }
 };

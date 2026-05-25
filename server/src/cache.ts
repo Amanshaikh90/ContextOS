@@ -9,8 +9,8 @@ export const contextCache = {
         try{
             const stringData=JSON.stringify(data);
 
-            await redis.set(key,stringData,'EX',60);
-            console.log(`Context cached for key :${key } (Expires in 60s)`);
+            await redis.set(key,stringData,'EX',900); // 15 minutes expiration
+            console.log(`Context cached for key :${key } (Expires in 900s)`);
         }catch(error){
             console.log('Redis Set Error:', error);
         }

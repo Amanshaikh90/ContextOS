@@ -22,7 +22,7 @@ const refreshJiraToken = async (userId: string, refreshToken: string) => {
     }
 };
 
-export const fetchJiraTickets = async (file: string, token: string,userId?:string) => {
+export const fetchJiraTickets:any = async (file: string, token: string,userId?:string) => {
     try {
         const accessibleResources = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
             headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
