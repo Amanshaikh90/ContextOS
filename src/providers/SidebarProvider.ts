@@ -3,6 +3,10 @@ import { getNonce } from "../utilities/getNonce";
 import { WebviewMessageType, WebviewMessage } from "../types/messaging";
 import { connectSocket, updateRepo, disconnectSocket } from "../utilities/socketClient";
 
+// 🚀 PRODUCTION VARIABLE ASSIGNMENT
+// Replace this string placeholder with your exact live Railway domain:
+const PRODUCTION_BACKEND_URL = "https://patient-smile-production.up.railway.app";
+
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
   private _currentRepo: string = '';             // track the active repo (empty = all)
@@ -13,7 +17,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     private readonly _userId: string
   ) {}
 
-  // Set the badge view from outside (extension.ts)
   public setBadgeView(badgeView: vscode.TreeView<any>) {
     this._badgeView = badgeView;
   }
@@ -30,7 +33,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
 
     this._setWebviewMessageListener(webviewView.webview);
 
-    // Start WebSocket with empty repo (all repos)
     this._currentRepo = "";
     this._connectWebSocket("");
   }
@@ -43,7 +45,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
       repo: repoName
     });
 
-    // Update the stored repo and notify the WebSocket server
     this._currentRepo = repoName;
     updateRepo(repoName);
   }
@@ -51,10 +52,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _connectWebSocket(repo: string): void {
     const handler = (data: any) => {
       if (data && data.refresh === true) {
-        // Webhook refresh signal → fetch correct context for this user's view
         this._fetchAndPostContext(data.repo || '');
       } else {
-        // Other WebSocket messages (not currently used)
         this._view?.webview.postMessage({
           type: WebviewMessageType.ContextLoaded,
           value: { ...data, _source: 'websocket' },
@@ -65,37 +64,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _fetchAndPostContext(webhookRepo: string) {
-    // Decide which repo to fetch based on the user's current view
     let fetchRepo = '';
     if (this._currentRepo === '') {
-      // Viewing "all repos" → always fetch all
       fetchRepo = '';
     } else if (webhookRepo.toLowerCase() === this._currentRepo.toLowerCase()) {
-      // Viewing a specific repo that matches the webhook → fetch that repo
       fetchRepo = webhookRepo;
     } else {
-      // Webhook is for a different repo than the one being viewed → ignore
       return;
     }
 
     try {
-      const url = new URL("http://localhost:3001/context");
+      // ⚡ LINK PLACE 1: Updated WebSocket context endpoint destination
+      const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
       url.searchParams.append("userId", this._userId);
       if (fetchRepo) {url.searchParams.append("repo", fetchRepo);}
-      url.searchParams.append("refresh", "true"); // bypass cache
+      url.searchParams.append("refresh", "true"); 
 
       const response = await fetch(url.toString());
       if (!response.ok) {throw new Error(`Status ${response.status}`);}
 
       const result = await response.json();
 
-      // Forward to webview
       this._view?.webview.postMessage({
         type: WebviewMessageType.ContextLoaded,
         value: { ...result, _source: 'websocket-refresh' },
       });
 
-      // Update the activity bar badge
       this._updateBadge(result.github || []);
     } catch (err: any) {
       console.error("[contextOS] WebSocket refresh fetch failed:", err);
@@ -117,7 +111,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  // ───────── existing message listener (with added badge update) ─────────
   private _setWebviewMessageListener(webview: vscode.Webview): void {
     webview.onDidReceiveMessage(async (data: any) => {
       try {
@@ -126,7 +119,8 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const { file, folder, repo, refresh, skipAI } = data.payload || {};
 
             try {
-              const url = new URL("http://localhost:3001/context");
+              // ⚡ LINK PLACE 2: Updated Core Webview Context loader fetch endpoint
+              const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
               url.searchParams.append("userId", this._userId);
               if (file) {url.searchParams.append("file", file);};
               if (folder) {url.searchParams.append("folder", folder);};
@@ -146,7 +140,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
                 value: result
               });
 
-              // Update badge after manual fetch
               this._updateBadge(result.github || []);
             } catch (fetchErr: any) {
               console.error("[contextOS] Error fetching from backend:", fetchErr);
@@ -167,15 +160,18 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             break;
 
           case "auth-jira":
-            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/jira?userId=${this._userId}`));
+            // ⚡ LINK PLACE 3: Jira OAuth redirect target
+            vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/jira?userId=${this._userId}`));
             break;
 
           case "auth-github":
-            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/github?userId=${this._userId}`));
+            // ⚡ LINK PLACE 4: GitHub OAuth redirect target
+            vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/github?userId=${this._userId}`));
             break;
 
           case "auth-slack":
-            vscode.env.openExternal(vscode.Uri.parse(`http://localhost:3001/auth/slack?userId=${this._userId}`));
+            // ⚡ LINK PLACE 5: Slack OAuth redirect target
+            vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/slack?userId=${this._userId}`));
             break;
 
           case WebviewMessageType.Info:
@@ -186,22 +182,20 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             if (data.value) {vscode.window.showErrorMessage(data.value);};
             break;
 
-                    // ... inside _setWebviewMessageListener, after the existing cases, add:
-
-            case "updatePrBadge": {
-              const { openCount, mergedCount } = data.payload || {};
-              if (!this._badgeView) return;
-              const total = (openCount ?? 0) + (mergedCount ?? 0);
-              if (total > 0) {
-                this._badgeView.badge = {
-                  value: total,
-                  tooltip: `Open PRs: ${openCount ?? 0} • Merged PRs: ${mergedCount ?? 0}`
-                };
-              } else {
-                this._badgeView.badge = undefined;
-              }
-              break;
+          case "updatePrBadge": {
+            const { openCount, mergedCount } = data.payload || {};
+            if (!this._badgeView) {return;};
+            const total = (openCount ?? 0) + (mergedCount ?? 0);
+            if (total > 0) {
+              this._badgeView.badge = {
+                value: total,
+                tooltip: `Open PRs: ${openCount ?? 0} • Merged PRs: ${mergedCount ?? 0}`
+              };
+            } else {
+              this._badgeView.badge = undefined;
             }
+            break;
+          }
 
           default:
             console.warn(`[contextOS] Unhandled message type: ${data.type}`);

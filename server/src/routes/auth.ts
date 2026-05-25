@@ -4,7 +4,7 @@ import axios from 'axios';
 
 const router:Router = Router();
 const BASE_URL = process.env.NODE_ENV === 'production' 
-    ? 'https://your-railway-app.up.railway.app' 
+    ? 'https://contextos-production.up.railway.app' 
     : 'https://quartered-happening-remedial.ngrok-free.dev';
 
 
