@@ -8,7 +8,6 @@ WORKDIR /app
 COPY package.json pnpm-lock.yaml* ./
 
 # 2. Copy the prisma folder into the container
-# This looks for the "prisma" folder right next to this Dockerfile
 COPY prisma ./prisma/
 
 # 3. Install dependencies
@@ -20,6 +19,8 @@ RUN pnpm prisma generate
 # 5. Copy the rest of your code
 COPY . .
 
+# ⚡ CHANGE 1: Expose the dynamic environment port that Railway requires
 EXPOSE 3001
 
-CMD ["pnpm", "run", "dev"]
+# ⚡ CHANGE 2: Pass host configuration parameters directly to your execution command
+CMD ["pnpm", "run", "dev", "--host", "0.0.0.0"]
