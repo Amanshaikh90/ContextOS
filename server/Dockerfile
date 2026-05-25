@@ -19,8 +19,11 @@ RUN pnpm prisma generate
 # 5. Copy the rest of your code
 COPY . .
 
-# ⚡ CHANGE 1: Expose the dynamic environment port that Railway requires
+# 6. Build/compile TypeScript to production JavaScript files
+RUN pnpm run build
+
+# ⚡ EXPOSE the environment port that Railway requires
 EXPOSE 3001
 
-# ⚡ CHANGE 2: Pass host configuration parameters directly to your execution command
-CMD ["pnpm", "run", "dev", "--host", "0.0.0.0"]
+# ⚡ CHANGE: Execute the production script containing the automatic Prisma migration 
+CMD ["pnpm", "run", "start"]
