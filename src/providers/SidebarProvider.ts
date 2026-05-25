@@ -5,7 +5,7 @@ import { connectSocket, updateRepo, disconnectSocket } from "../utilities/socket
 
 // 🚀 PRODUCTION VARIABLE ASSIGNMENT
 // Replace this string placeholder with your exact live Railway domain:
-const PRODUCTION_BACKEND_URL = "https://patient-smile-production.up.railway.app";
+const PRODUCTION_BACKEND_URL = "https://contextos-production.up.railway.app/api";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;

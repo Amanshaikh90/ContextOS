@@ -28,8 +28,8 @@ redis.on('error',(err)=>{
 
 
 
-app.use('/auth', authRoutes);       // /auth/init, /auth/token, /auth/jira, etc.
-app.use('/context', contextRoutes); 
+app.use('/api/auth', authRoutes);       // /auth/init, /auth/token, /auth/jira, etc.
+app.use('/api/context', contextRoutes); 
 app.use('/api',contextRoutes);
 
 const PORT = process.env.PORT || 5000;
