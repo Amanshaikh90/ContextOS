@@ -176,7 +176,7 @@ const App: React.FC = () => {
     return (
       <div style={aiCardStyle}>
         <div style={{ display: 'flex', alignItems: 'center', gap: '5px', marginBottom: '8px' }}>
-          <span style={{ fontSize: '10px' }}>✨</span>
+          <span style={{ fontSize: '10px' }}>#</span>
           <h3 style={{ ...sectionHeaderStyle, marginTop: 0, marginBottom: 0, color: 'var(--vscode-button-background)' }}>
             AI INSIGHT
           </h3>
@@ -205,7 +205,7 @@ const App: React.FC = () => {
             {activeFolder || 'contextOS'}
           </h2>
           <p style={{ fontSize: '11px', margin: '2px 0', fontWeight: 'bold', color: 'var(--vscode-textLink-foreground)' }}>
-            📄 {activeFile}
+            {activeFile}
           </p>
         </div>
         <button title="Refresh Context" onClick={() => fetchContext(true, false)} style={refreshBtnStyle} disabled={loading}>
@@ -223,7 +223,7 @@ const App: React.FC = () => {
 
       {(activeRepo || submittedRepo) ? (
         <div style={{ fontSize: '10px', opacity: 0.7, marginBottom: '10px' }}>
-          ✅ Linked to: <strong>{(submittedRepo || activeRepo).includes('/') ? (submittedRepo || activeRepo).split('/').pop() : (submittedRepo || activeRepo)}</strong>
+          Linked to: <strong>{(submittedRepo || activeRepo).includes('/') ? (submittedRepo || activeRepo).split('/').pop() : (submittedRepo || activeRepo)}</strong>
           {submittedRepo && (
             <button 
               style={{ marginLeft: '8px', background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '10px' }}
