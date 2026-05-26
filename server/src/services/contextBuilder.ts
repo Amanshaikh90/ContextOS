@@ -7,7 +7,6 @@ import { embeddingService } from './ai/embeddings.service.js';
 import { pineconeService } from './vector/pinecone.service.js';
 import { contextCache } from '../cache.js';
 
-
 export async function getContextForUser(
   userId: string,
   repo: string = '',
@@ -18,7 +17,6 @@ export async function getContextForUser(
   const cleanRepoKey = targetRepo ? targetRepo.toLowerCase() : 'none';
   const cacheKey = `context:${userId}:${cleanRepoKey}`;
 
-  
   const cachedData = refresh ? null : await contextCache.getContext(cacheKey);
   if (cachedData && !refresh) {
     const cachedRepo = cachedData.repo || '';
@@ -28,14 +26,12 @@ export async function getContextForUser(
     }
   }
 
-  
   const [githubRecord, jiraRecord, slackRecord] = await Promise.all([
     getTokenByUserId(userId, 'github').catch(() => null),
     getTokenByUserId(userId, 'jira').catch(() => null),
     getTokenByUserId(userId, 'slack').catch(() => null),
   ]);
 
-  
   const [github, jira, slack, historicalContext] = await Promise.all([
     githubRecord?.accessToken
       ? fetchGitHubPRs('', githubRecord.accessToken, targetRepo).catch(() => [])
@@ -54,6 +50,40 @@ export async function getContextForUser(
   ]);
 
   
+  let finalHistoricalContext = [...historicalContext];
+
+  if (targetRepo && historicalContext.length === 0 && github.length > 0) {
+    console.log(`[Backfill] No vectors found for user ${userId}. Auto-indexing up to 5 recent PRs.`);
+    try {
+      
+      const { contextService } = await import('./context.service.js');
+      
+      
+      const prsToBackfill = github.slice(0, 5);
+      
+      for (const pr of prsToBackfill) {
+        await contextService.indexGithubPR(
+          {
+            id: pr.id,
+            title: pr.title,
+            body: `Status: ${pr.status || 'open'}. URL reference: ${pr.url || ''}`,
+            html_url: pr.url
+          },
+          targetRepo,
+          userId
+        );
+      }
+
+      
+      const freshVector = await embeddingService.generateEmbedding(targetRepo);
+      if (freshVector) {
+        finalHistoricalContext = await pineconeService.queryContext(freshVector, 5, targetRepo, userId);
+      }
+    } catch (backfillError) {
+      console.error("[Backfill Module Recovery] Intercepted error during synchronization:", backfillError);
+    }
+  }
+
   const livePRs = github.map((pr: any) => ({
     id: `live-${pr.id || Math.random()}`,
     title: pr.title || 'Untitled PR',
@@ -62,7 +92,8 @@ export async function getContextForUser(
     status: pr.status || 'open',
   }));
 
-  const mappedHistorical = historicalContext.map((match: any) => ({
+  
+  const mappedHistorical = finalHistoricalContext.map((match: any) => ({
     id: `hist-${match.id || Math.random()}`,
     title: match.metadata?.title || 'Untitled Historical PR',
     url: match.metadata?.url || '#',
@@ -82,7 +113,6 @@ export async function getContextForUser(
 
   const combinedGithub = [...livePRs, ...mappedHistorical].filter(filterByRepo);
 
-  
   let aiSummary = '';
   if (skipAI) {
     aiSummary = cachedData?.aiSummary || 'Summary metrics synchronized.';
@@ -102,7 +132,6 @@ export async function getContextForUser(
     }
   }
 
-  
   const responseData = {
     project: targetRepo || 'All Workspaces',
     repo: targetRepo,
@@ -112,7 +141,6 @@ export async function getContextForUser(
     aiSummary,
   };
 
-  
   if (!skipAI) {
     await contextCache.setContext(cacheKey, responseData);
   }

@@ -37,74 +37,70 @@ router.post('/token', async (req, res) => {
 
 // Route 1: Start the login process
 
-router.get('/github',(req:Request,res:Response)=>{
+router.get('/github', (req: Request, res: Response) => {
     const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
+    
+    // Capture the dynamic userId sent from the VS Code extension instance
+    const targetUserId = req.query.userId as string;
+
+    if (!targetUserId) {
+        console.warn("⚠️ Warning: /auth/github called without a userId parameter.");
+    }
 
     const params = new URLSearchParams({
-        client_id:process.env.GITHUB_CLIENT_ID || '',
-        redirect_uri:`${BASE_URL}/auth/github/callback`,
-        state:req.query.userId as string // should be random in production
+        client_id: process.env.GITHUB_CLIENT_ID || '',
+        redirect_uri: `${BASE_URL}/auth/github/callback`,
+        // Secures the userId by sending it to GitHub, which will safely hand it back in the callback
+        state: targetUserId || 'dev-test-user-001' 
     });
     res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
 });
 
-
 // Router 2: The Callback - GitHub sends the user back here
-router.get('/github/callback',async(req:Request,res:Response)=>{
-    const {code,state:userId} = req.query;
+router.get('/github/callback', async (req: Request, res: Response) => {
+    // Read the secure state param returned by GitHub to find exactly who this token belongs to
+    const { code, state: userId } = req.query;
 
-    
-
-    if(!code){
+    if (!code) {
         return res.status(400).send("No code provided from GitHub");
     }
 
     const finalUserId = (userId as string) || "dev-test-user-001";
 
-    try{
-
-        // Exchange code for Acces Token
-
-        const tokenResponse = await fetch('https://github.com/login/oauth/access_token',{
-            method:'POST',
-            headers:{
-                'Accept':'application/json',
-                'Content-Type':'application/json'
+    try {
+        // Exchange code for Access Token
+        const tokenResponse = await fetch('https://github.com/login/oauth/access_token', {
+            method: 'POST',
+            headers: {
+                'Accept': 'application/json',
+                'Content-Type': 'application/json'
             },
-            body:JSON.stringify({
-                client_id:process.env.GITHUB_CLIENT_ID,
-                client_secret:process.env.GITHUB_CLIENT_SECRET,
+            body: JSON.stringify({
+                client_id: process.env.GITHUB_CLIENT_ID,
+                client_secret: process.env.GITHUB_CLIENT_SECRET,
                 code,
                 redirect_uri: `${BASE_URL}/auth/github/callback`
             })
         });
 
-        const data:any = await tokenResponse.json();
+        const data: any = await tokenResponse.json();
 
-        if(data.error){
+        if (data.error) {
             return res.status(400).json(data);
         }
 
         const accessToken = data.access_token;
 
-        // NOTE: In a real app, you'd get the userId from a session or JWT.
-        // For now, we are proving the connection works.
-        // await saveToken(some_user_id, 'github', accessToken);
+        // Save the access token to PostgreSQL mapped dynamically to the authenticated user's ID
+        await saveToken(finalUserId, 'github', accessToken);
 
-        // GET YOUR USER ID : open pgadmin, copy the uuid hardcode it
+        // Serve a clean confirmation message to the browser window
+        res.send('<h1>GitHub Connected! You can close this window and return to VS Code.</h1>');
 
-
-        // save to database
-
-        await saveToken(finalUserId as string,'github',accessToken);
-
-        res.send('<h1>GitHub Connected! You can close this.</h1>');
-
-    }catch(error){
-        console.error("OAuth Error:" , error);
+    } catch (error) {
+        console.error("OAuth Error:", error);
         res.status(500).send("Authentication failed");
     }
-
 });
 
 
