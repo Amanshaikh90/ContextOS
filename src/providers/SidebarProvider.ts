@@ -3,14 +3,13 @@ import { getNonce } from "../utilities/getNonce";
 import { WebviewMessageType, WebviewMessage } from "../types/messaging";
 import { connectSocket, updateRepo, disconnectSocket } from "../utilities/socketClient";
 
-// 🚀 PRODUCTION VARIABLE ASSIGNMENT
-// Replace this string placeholder with your exact live Railway domain:
 const PRODUCTION_BACKEND_URL = "https://contextos-production.up.railway.app/api";
 
 export class SidebarProvider implements vscode.WebviewViewProvider {
   private _view?: vscode.WebviewView;
-  private _currentRepo: string = '';             // track the active repo (empty = all)
-  private _badgeView?: vscode.TreeView<any>;     // for activity bar badge
+  private _currentRepo: string = '';             
+  private _isGlobalDashboardMode: boolean = false; 
+  private _badgeView?: vscode.TreeView<any>;     
 
   constructor(
     private readonly _extensionUri: vscode.Uri,
@@ -34,10 +33,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._setWebviewMessageListener(webviewView.webview);
 
     this._currentRepo = "";
+    this._isGlobalDashboardMode = false; // Reset whenever views initialize or refresh
     this._connectWebSocket("");
   }
 
   public updateContext(filename: string, folderName: string, repoName: string = ''): void {
+    
+    if (this._isGlobalDashboardMode) {
+      this._view?.webview.postMessage({
+        type: WebviewMessageType.FileChanged,
+        file: filename,
+        folder: folderName,
+        repo: ''
+      });
+      return;
+    }
+
     this._view?.webview.postMessage({
       type: WebviewMessageType.FileChanged,
       file: filename,
@@ -74,7 +85,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     }
 
     try {
-      // ⚡ LINK PLACE 1: Updated WebSocket context endpoint destination
       const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
       url.searchParams.append("userId", this._userId);
       if (fetchRepo) {url.searchParams.append("repo", fetchRepo);}
@@ -119,7 +129,6 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             const { file, folder, repo, refresh, skipAI } = data.payload || {};
 
             try {
-              // ⚡ LINK PLACE 2: Updated Core Webview Context loader fetch endpoint
               const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
               url.searchParams.append("userId", this._userId);
               if (file) {url.searchParams.append("file", file);};
@@ -160,18 +169,22 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             break;
 
           case "auth-jira":
-            // ⚡ LINK PLACE 3: Jira OAuth redirect target
             vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/jira?userId=${this._userId}`));
             break;
 
           case "auth-github":
-            // ⚡ LINK PLACE 4: GitHub OAuth redirect target
             vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/github?userId=${this._userId}`));
             break;
 
           case "auth-slack":
-            // ⚡ LINK PLACE 5: Slack OAuth redirect target
             vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/slack?userId=${this._userId}`));
+            break;
+
+          
+          case "clear-repo-lock":
+            this._currentRepo = "";
+            this._isGlobalDashboardMode = true;
+            updateRepo("");
             break;
 
           case WebviewMessageType.Info:

@@ -28,7 +28,7 @@ export const fetchJiraTickets:any = async (file: string, token: string,userId?:s
             headers: { 'Authorization': `Bearer ${token}`, 'Accept': 'application/json' }
         });
 
-        if (!accessibleResources.data || accessibleResources.data.length === 0) return [];
+        if (!accessibleResources.data || accessibleResources.data.length === 0) {return [];}
         const cloudId = accessibleResources.data[0].id;
         const siteName = accessibleResources.data[0].name;
 

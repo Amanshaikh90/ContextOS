@@ -103,7 +103,7 @@ export async function getContextForUser(
   }));
 
   const filterByRepo = (pr: any) => {
-    if (!targetRepo) return true;
+    if (!targetRepo) {return true;}
     const cleanTarget = targetRepo.toLowerCase();
     const targetNameOnly = cleanTarget.includes('/') ? cleanTarget.split('/').pop() : cleanTarget;
     const prRepo = (pr.repo || '').toLowerCase();

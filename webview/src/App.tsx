@@ -221,17 +221,22 @@ const App: React.FC = () => {
 
       {error && <div style={errorStyle}>⚠️ {error}</div>}
 
+      {/* ✨ CHANGED: [Clear] button is now available for both auto-detected (activeRepo) and manual entries */}
       {(activeRepo || submittedRepo) ? (
         <div style={{ fontSize: '10px', opacity: 0.7, marginBottom: '10px' }}>
           Linked to: <strong>{(submittedRepo || activeRepo).includes('/') ? (submittedRepo || activeRepo).split('/').pop() : (submittedRepo || activeRepo)}</strong>
-          {submittedRepo && (
-            <button 
-              style={{ marginLeft: '8px', background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '10px' }}
-              onClick={() => { setSubmittedRepo(''); setManualRepo(''); fetchContext(true, false, ''); }}
-            >
-              [Clear]
-            </button>
-          )}
+          <button 
+            style={{ marginLeft: '8px', background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '10px' }}
+            onClick={() => { 
+              setSubmittedRepo(''); 
+              setActiveRepo(''); 
+              setManualRepo(''); 
+              vscode.postMessage({ type: 'clear-repo-lock' });
+              fetchContext(true, false, ''); 
+            }}
+          >
+            [Clear]
+          </button>
         </div>
       ) : (
         <div style={{ padding: '8px', backgroundColor: 'var(--vscode-badge-background)', borderRadius: '4px', marginBottom: '10px' }}>
@@ -293,7 +298,7 @@ const App: React.FC = () => {
                   </button>
                 </div>
               </div>
-              <div style={metaStyle}>repo: {displayRepoName}</div>
+              <div style={itemCardStyle && metaStyle}>repo: {displayRepoName}</div>
             </div>
           );
         }) : <p style={emptyTextStyle}>No PRs found</p>}
@@ -345,7 +350,6 @@ const App: React.FC = () => {
   );
 };
 
-// Styles unchanged ...
 const aiCardStyle: React.CSSProperties = { backgroundColor: 'var(--vscode-editor-inactiveSelectionBackground)', padding: '12px 15px', borderRadius: '4px', borderLeft: '4px solid var(--vscode-button-background)', marginBottom: '16px' };
 const mainStyle: React.CSSProperties = { padding: '12px', color: 'var(--vscode-foreground)', fontFamily: 'var(--vscode-font-family)', width:'100%', boxSizing:'border-box' };
 const headerStyle: React.CSSProperties = { display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '15px', borderBottom: '1px solid var(--vscode-panel-border)' };
