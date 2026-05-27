@@ -115,6 +115,29 @@ const App: React.FC = () => {
     fetchContext(false, false);
   }, [activeRepo, submittedRepo]);
 
+  // ✨ ADDED: Silent Background polling mechanism running every 15 minutes
+  // Gracefully acts on Case 1 (Global Context) and Case 2 (Linked Repo Context)
+  useEffect(() => {
+    const REFRESH_INTERVAL = 15 * 60 * 1000; 
+
+    const silentInterval = setInterval(() => {
+      const currentRepoContext = submittedRepo || activeRepo || '';
+      
+      vscode.postMessage({
+        type: "request-context-data",
+        payload: {
+          file: "",
+          folder: "",
+          repo: currentRepoContext,
+          refresh: 'true',
+          skipAI: true // Passing true ensures silent operations without full AI re-runs
+        }
+      });
+    }, REFRESH_INTERVAL);
+
+    return () => clearInterval(silentInterval);
+  }, [activeRepo, submittedRepo]);
+
   const startAuth = (service: 'jira' | 'github' | 'slack') => {
     vscode.postMessage({ type: `auth-${service}` });
   };
@@ -221,7 +244,6 @@ const App: React.FC = () => {
 
       {error && <div style={errorStyle}>⚠️ {error}</div>}
 
-      {/* ✨ CHANGED: [Clear] button is now available for both auto-detected (activeRepo) and manual entries */}
       {(activeRepo || submittedRepo) ? (
         <div style={{ fontSize: '10px', opacity: 0.7, marginBottom: '10px' }}>
           Linked to: <strong>{(submittedRepo || activeRepo).includes('/') ? (submittedRepo || activeRepo).split('/').pop() : (submittedRepo || activeRepo)}</strong>
@@ -308,13 +330,26 @@ const App: React.FC = () => {
       <h3 style={sectionHeaderStyle}>Related Jira Issues</h3>
       <div style={{ maxHeight: '150px', overflowY: 'auto', paddingRight: '4px' }}>
         {filteredJira.length > 0 ? filteredJira.map((issue: any, idx: number) => (
-          <div key={issue.id || `jira-${idx}`} style={itemCardStyle}>
+          // ✨ CHANGED: Combined with an explicit click event message to open links cleanly
+          <div 
+            key={issue.id || `jira-${idx}`} 
+            style={{ ...itemCardStyle, cursor: 'pointer' }}
+            title="Click to open ticket in browser"
+            onClick={() => {
+              if (issue.url) {
+                vscode.postMessage({ type: 'open-external-link', url: issue.url });
+              }
+            }}
+          >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={titleStyle}>{issue.title}</span>
               <div style={{ display: 'flex', gap: '6px', alignItems: 'center' }}>
                 <span style={issue.status === 'Done' ? mergedBadgeStyle : openBadgeStyle}>{issue.status}</span>
                 <button 
-                  onClick={() => removeJira(issue.id)} 
+                  onClick={(e) => { 
+                    e.stopPropagation(); // Stops event bubbling up to the card wrapper link opener
+                    removeJira(issue.id); 
+                  }} 
                   style={{ background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '14px', padding: 0, lineHeight: 1 }}
                   title="Remove from list"
                 >
