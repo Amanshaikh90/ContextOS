@@ -1,5 +1,5 @@
 import { Router, Request, Response } from 'express';
-import { createUser, saveToken, getTokenByUserId } from '../services/dbHelper.js';
+import { createUser, saveToken, getTokenByUserId, deleteToken } from '../services/dbHelper.js';
 import axios from 'axios';
 
 const router: Router = Router();
@@ -35,8 +35,6 @@ router.post('/token', async (req, res) => {
 });
 
 
-// Route 1: Start the login process
-// Route 1: Start the login process with an installation-first check
 // Route 1: Start the login process with a self-healing installation check
 router.get('/github', async (req: Request, res: Response) => {
     const targetUserId = req.query.userId as string;
@@ -60,11 +58,9 @@ router.get('/github', async (req: Request, res: Response) => {
                 });
 
                 if (checkResponse.status === 401) {
-                    // 🚨 Token is dead (revoked on GitHub)! Force deletion from DB so they act as a new user.
-                    console.log(`Token for user ${targetUserId} was revoked on GitHub. Cleaning up database.`);
-                    
-                    // Call your DB helper here to clear/delete the token row
-                    // e.g., await deleteTokenByUserId(targetUserId, 'github'); 
+                    // 🚨 Token is dead (revoked on GitHub)! Clear it out using our Prisma helper.
+                    console.log(`Token for user ${targetUserId} was revoked on GitHub. Wiping entry.`);
+                    await deleteToken(targetUserId, 'github');
                 } else {
                     // 🌟 Token is active and healthy! Skip installation and go straight to normal OAuth.
                     const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
@@ -237,7 +233,7 @@ router.get('/slack', (req, res) => {
 });
 
 // Router 2
-router.get('/slack/callback', async (req, res) => {
+router.get('/slack/callback', async (req: Request, res: Response) => {
     const { code, state: userId, error } = req.query;
 
     if (error) {

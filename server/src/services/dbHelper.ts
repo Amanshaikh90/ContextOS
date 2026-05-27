@@ -111,3 +111,16 @@ export const getTokenByUserId = async (userId: string, provider: string) => {
     }
     return null;
 };
+
+// ✨ Self-Healing helper: Safely drops invalid/revoked integration rows 
+export const deleteToken = async (userId: string, provider: string) => {
+    try {
+        return await prisma.oAuthToken.delete({
+            where: { userId_provider: { userId, provider } }
+        });
+    } catch (err) {
+        // Suppress errors if the record was already deleted or doesn't exist
+        console.warn(`[dbHelper] Record cleanup bypass or already missing:`, err);
+        return null;
+    }
+};

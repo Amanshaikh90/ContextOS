@@ -115,10 +115,14 @@ export async function getContextForUser(
 
   let aiSummary = '';
   if (skipAI) {
-    aiSummary = cachedData?.aiSummary || 'Summary metrics synchronized.';
+    // Read from your clean cache file if it exists, else leave it empty to trigger fresh model insights below
+    aiSummary = cachedData?.aiSummary || '';
   } else if (refresh && cachedData) {
     aiSummary = cachedData.aiSummary;
-  } else {
+  }
+
+  // Enforce true fallback generation so that a missing cache doesn't display a hardcoded string
+  if (!aiSummary) {
     try {
       aiSummary = await getAIContextSummary(
         targetRepo ? `Repository: ${targetRepo}` : 'Global Dashboard',
@@ -128,7 +132,7 @@ export async function getContextForUser(
         targetRepo || 'All Repositories'
       );
     } catch {
-      aiSummary = cachedData?.aiSummary || 'Summary metrics ready below.';
+      aiSummary = cachedData?.aiSummary || 'An unexpected error occurred while compiling pipeline insights.';
     }
   }
 
