@@ -11,9 +11,9 @@ export const fetchGitHubPRs = async (file: string, token: string, repoName?: str
             hasSpecificRepo = true;
             
             if (cleanRepo.includes('/')) {
-                query = `repo:${cleanRepo} is:pr`;
+                query = `repo:${cleanRepo} type:pr`;
             } else {
-                query = `user:@me repo:${cleanRepo} is:pr`;
+                query = `user:@me repo:${cleanRepo} type:pr`;
             }
         }
 

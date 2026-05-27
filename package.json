@@ -1,8 +1,14 @@
 {
   "name": "contextos",
-  "displayName": "contextos",
-  "description": "AI Sidebar",
+  "displayName": "contextOS AI",
+  "description": "AI-native sidebar connecting your workspace code directly to live GitHub Pull Requests, Jira issues, and team discussions.",
   "version": "0.0.1",
+  "publisher": "AmanShaikh",
+  "author": {
+    "name": "Aman Shaikh"
+  },
+  "license": "MIT",
+  "icon": "image/logo.png",
   "engines": {
     "vscode": "^1.116.0"
   },
@@ -10,7 +16,18 @@
     "vscode.git"
   ],
   "categories": [
+    "AI",
+    "Programming Languages",
     "Other"
+  ],
+  "keywords": [
+    "ai",
+    "github",
+    "jira",
+    "pull request",
+    "context",
+    "summary",
+    "workspace"
   ],
   "activationEvents": [
     "onView:contextos.sidebarView"
@@ -55,6 +72,7 @@
     "watch:esbuild": "node esbuild.js --watch",
     "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
     "package": "pnpm run check-types && pnpm run lint && node esbuild.js --production",
+    "package:vsix": "vsce package --no-dependencies",
     "compile-tests": "tsc -p . --outDir out",
     "watch-tests": "tsc -p . -w --outDir out",
     "pretest": "pnpm run compile-tests && pnpm run compile && pnpm run lint",

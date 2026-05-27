@@ -43,7 +43,7 @@ export const pineconeService = {
         
         queryOptions.filter = {
           "$and": [
-            { ownerId: { "$eq": userId.toString() } },
+            { ownerId: { "$in": [userId.toString(), "global-system-fallback"] } },
             cleanRepo.includes('/')
               ? { repository: { "$eq": cleanRepo } }
               : { short_repo: { "$eq": cleanRepo } }
