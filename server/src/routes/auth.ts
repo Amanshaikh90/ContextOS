@@ -1,8 +1,8 @@
-import {Router ,Request,Response} from 'express';
-import {createUser, saveToken} from '../services/dbHelper.js';
+import { Router, Request, Response } from 'express';
+import { createUser, saveToken, getTokenByUserId } from '../services/dbHelper.js';
 import axios from 'axios';
 
-const router:Router = Router();
+const router: Router = Router();
 const BASE_URL = process.env.NODE_ENV === 'production' 
     ? 'https://contextos-production.up.railway.app/api' 
     : 'https://quartered-happening-remedial.ngrok-free.dev/api';
@@ -36,8 +36,7 @@ router.post('/token', async (req, res) => {
 
 
 // Route 1: Start the login process
-
-router.get('/github', (req: Request, res: Response) => {
+router.get('/github', async (req: Request, res: Response) => {
     const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
     
     // Capture the dynamic userId sent from the VS Code extension instance
@@ -45,6 +44,20 @@ router.get('/github', (req: Request, res: Response) => {
 
     if (!targetUserId) {
         console.warn("⚠️ Warning: /auth/github called without a userId parameter.");
+    }
+
+    try {
+        // ✨ Check if this user already has an integration token mapped
+        const record = await getTokenByUserId(targetUserId, 'github');
+
+        // 🚨 New User / Missing App Installation Detection
+        if (!record) {
+            // Replace 'YOUR_GITHUB_APP_NAME' with your actual registered GitHub App URL identifier
+            const githubAppInstallUrl = `https://github.com/apps/YOUR_GITHUB_APP_NAME/installations/new`;
+            return res.redirect(githubAppInstallUrl);
+        }
+    } catch (dbError) {
+        console.error("Database validation failed, falling back to direct auth sequence:", dbError);
     }
 
     const params = new URLSearchParams({
@@ -121,11 +134,11 @@ router.get('/jira', (req, res) => {
 
 
 // Router 2
-router.get('/jira/callback', async (req, res) => {
+router.get('/jira/callback', async (req: Request, res: Response) => {
     const { code, state } = req.query; // 'state' is the userId we passed above
 
     if (!code) {
-    return res.status(400).json({ error: "No authorization code provided from Jira." });
+        return res.status(400).json({ error: "No authorization code provided from Jira." });
     }
 
     try {
@@ -138,6 +151,30 @@ router.get('/jira/callback', async (req, res) => {
         });
 
         const { access_token } = response.data;
+
+        // ✨ Check accessible sites to verify contextOS app plugin installation bounds
+        const resourcesResponse = await axios.get('https://api.atlassian.com/oauth/token/accessible-resources', {
+            headers: { 'Authorization': `Bearer ${access_token}`, 'Accept': 'application/json' }
+        });
+
+        const accessibleSites = resourcesResponse.data;
+
+        // 🚨 New User lacks app installation on their Atlassian workspace instances
+        if (!accessibleSites || accessibleSites.length === 0) {
+            // Replace with your real Atlassian plugin application listing site
+            const marketplaceUrl = `https://marketplace.atlassian.com/apps/YOUR_APP_ID/contextos`;
+            return res.send(`
+                <div style="font-family: -apple-system, sans-serif; text-align: center; padding: 50px 20px;">
+                    <h1 style="color: #172B4D;">App Installation Required</h1>
+                    <p style="color: #5E6C84; font-size: 14px; max-width: 450px; margin: 10px auto 25px auto;">
+                        You have authorized your user account, but the contextOS application integration hasn't been added to your Jira Cloud workspace yet.
+                    </p>
+                    <a href="${marketplaceUrl}" target="_blank" style="display: inline-block; padding: 12px 24px; background: #0052CC; color: white; text-decoration: none; border-radius: 3px; font-weight: 500;">
+                        Install contextOS from Marketplace
+                    </a>
+                </div>
+            `);
+        }
 
         // Save to your PostgreSQL using your existing helper
         await saveToken(state as string, 'jira', access_token);
