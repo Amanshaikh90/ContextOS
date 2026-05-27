@@ -36,9 +36,8 @@ router.post('/token', async (req, res) => {
 
 
 // Route 1: Start the login process
+// Route 1: Start the login process with an installation-first check
 router.get('/github', async (req: Request, res: Response) => {
-    const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
-    
     // Capture the dynamic userId sent from the VS Code extension instance
     const targetUserId = req.query.userId as string;
 
@@ -47,23 +46,25 @@ router.get('/github', async (req: Request, res: Response) => {
     }
 
     try {
-        // ✨ Check if this user already has an integration token mapped
+        // Check if this user already has an integration token mapped in your DB
         const record = await getTokenByUserId(targetUserId, 'github');
 
-        // 🚨 New User / Missing App Installation Detection
+        // 🚨 NEW USER DETECTED: Force them to the App Installation Page first!
         if (!record) {
-            // Replace 'YOUR_GITHUB_APP_NAME' with your actual registered GitHub App URL identifier
-            const githubAppInstallUrl = `https://github.com/apps/YOUR_GITHUB_APP_NAME/installations/new`;
+            // Replace 'YOUR_GITHUB_APP_NAME' with the exact slug/name of your GitHub App
+            // Use the state parameter to pass your targetUserId along so you don't lose track of them
+            const githubAppInstallUrl = `https://github.com/apps/ContextOS-Beta/installations/new?state=${targetUserId || 'dev-test-user-001'}`;
             return res.redirect(githubAppInstallUrl);
         }
     } catch (dbError) {
         console.error("Database validation failed, falling back to direct auth sequence:", dbError);
     }
 
+    // 🌟 EXISTING USER: If they already have a record, skip installation and send to OAuth
+    const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
     const params = new URLSearchParams({
         client_id: process.env.GITHUB_CLIENT_ID || '',
         redirect_uri: `${BASE_URL}/auth/github/callback`,
-        // Secures the userId by sending it to GitHub, which will safely hand it back in the callback
         state: targetUserId || 'dev-test-user-001' 
     });
     res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
