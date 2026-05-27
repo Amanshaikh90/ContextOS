@@ -37,8 +37,8 @@ router.post('/token', async (req, res) => {
 
 // Route 1: Start the login process
 // Route 1: Start the login process with an installation-first check
+// Route 1: Start the login process with a self-healing installation check
 router.get('/github', async (req: Request, res: Response) => {
-    // Capture the dynamic userId sent from the VS Code extension instance
     const targetUserId = req.query.userId as string;
 
     if (!targetUserId) {
@@ -46,28 +46,56 @@ router.get('/github', async (req: Request, res: Response) => {
     }
 
     try {
-        // Check if this user already has an integration token mapped in your DB
+        // 1. Check if a token exists in your DB
         const record = await getTokenByUserId(targetUserId, 'github');
 
-        // 🚨 NEW USER DETECTED: Force them to the App Installation Page first!
-        if (!record) {
-            // Replace 'YOUR_GITHUB_APP_NAME' with the exact slug/name of your GitHub App
-            // Use the state parameter to pass your targetUserId along so you don't lose track of them
-            const githubAppInstallUrl = `https://github.com/apps/ContextOS-Beta/installations/new?state=${targetUserId || 'dev-test-user-001'}`;
-            return res.redirect(githubAppInstallUrl);
-        }
-    } catch (dbError) {
-        console.error("Database validation failed, falling back to direct auth sequence:", dbError);
-    }
+        if (record && record.accessToken) {
+            // 2. Validate the token with GitHub to make sure the user didn't revoke it!
+            try {
+                const checkResponse = await fetch('https://api.github.com/user', {
+                    headers: {
+                        'Authorization': `token ${record.accessToken}`,
+                        'Accept': 'application/json'
+                    }
+                });
 
-    // 🌟 EXISTING USER: If they already have a record, skip installation and send to OAuth
-    const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
-    const params = new URLSearchParams({
-        client_id: process.env.GITHUB_CLIENT_ID || '',
-        redirect_uri: `${BASE_URL}/auth/github/callback`,
-        state: targetUserId || 'dev-test-user-001' 
-    });
-    res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
+                if (checkResponse.status === 401) {
+                    // 🚨 Token is dead (revoked on GitHub)! Force deletion from DB so they act as a new user.
+                    console.log(`Token for user ${targetUserId} was revoked on GitHub. Cleaning up database.`);
+                    
+                    // Call your DB helper here to clear/delete the token row
+                    // e.g., await deleteTokenByUserId(targetUserId, 'github'); 
+                } else {
+                    // 🌟 Token is active and healthy! Skip installation and go straight to normal OAuth.
+                    const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
+                    const params = new URLSearchParams({
+                        client_id: process.env.GITHUB_CLIENT_ID || '',
+                        redirect_uri: `${BASE_URL}/auth/github/callback`,
+                        state: targetUserId || 'dev-test-user-001' 
+                    });
+                    return res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
+                }
+            } catch (apiErr) {
+                console.error("Failed to verify token with GitHub:", apiErr);
+            }
+        }
+
+        // 🚨 NEW USER OR REVOKED USER: Route them to the App Installation drawer first!
+        const githubAppInstallUrl = `https://github.com/apps/ContextOS-Beta/installations/new?state=${targetUserId || 'dev-test-user-001'}`;
+        return res.redirect(githubAppInstallUrl);
+
+    } catch (dbError) {
+        console.error("Database check failed, falling back to direct OAuth:", dbError);
+        
+        // Final fallback safety loop
+        const GITHUB_AUTH_URL = 'https://github.com/login/oauth/authorize';
+        const params = new URLSearchParams({
+            client_id: process.env.GITHUB_CLIENT_ID || '',
+            redirect_uri: `${BASE_URL}/auth/github/callback`,
+            state: targetUserId || 'dev-test-user-001' 
+        });
+        res.redirect(`${GITHUB_AUTH_URL}?${params.toString()}`);
+    }
 });
 
 // Router 2: The Callback - GitHub sends the user back here
