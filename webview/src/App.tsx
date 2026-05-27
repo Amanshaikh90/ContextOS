@@ -250,11 +250,24 @@ const App: React.FC = () => {
           <button 
             style={{ marginLeft: '8px', background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '10px' }}
             onClick={() => { 
+              // ✨ CHANGED: Fix asynchronous alignment bugs when shifting back down to Case 1
               setSubmittedRepo(''); 
               setActiveRepo(''); 
               setManualRepo(''); 
+              
+              lastRequestedRepoRef.current = ''; 
               vscode.postMessage({ type: 'clear-repo-lock' });
-              fetchContext(true, false, ''); 
+              
+              vscode.postMessage({
+                type: "request-context-data",
+                payload: {
+                  file: "",
+                  folder: "",
+                  repo: "",
+                  refresh: 'true',
+                  skipAI: 'false'
+                }
+              });
             }}
           >
             [Clear]
@@ -330,7 +343,6 @@ const App: React.FC = () => {
       <h3 style={sectionHeaderStyle}>Related Jira Issues</h3>
       <div style={{ maxHeight: '150px', overflowY: 'auto', paddingRight: '4px' }}>
         {filteredJira.length > 0 ? filteredJira.map((issue: any, idx: number) => (
-          // ✨ CHANGED: Combined with an explicit click event message to open links cleanly
           <div 
             key={issue.id || `jira-${idx}`} 
             style={{ ...itemCardStyle, cursor: 'pointer' }}
@@ -347,7 +359,7 @@ const App: React.FC = () => {
                 <span style={issue.status === 'Done' ? mergedBadgeStyle : openBadgeStyle}>{issue.status}</span>
                 <button 
                   onClick={(e) => { 
-                    e.stopPropagation(); // Stops event bubbling up to the card wrapper link opener
+                    e.stopPropagation(); 
                     removeJira(issue.id); 
                   }} 
                   style={{ background: 'none', border: 'none', color: 'var(--vscode-errorForeground)', cursor: 'pointer', fontSize: '14px', padding: 0, lineHeight: 1 }}
