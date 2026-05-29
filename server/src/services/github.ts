@@ -3,10 +3,12 @@ import { Octokit } from '@octokit/rest';
 export const fetchGitHubPRs = async (file: string, token: string, repoName?: string) => {
     const octokit = new Octokit({ auth: token });
     try {
-        let query = "is:pr author:@me"; // Safe default for all tokens
+        // 💡 FIX 1: Changed "is:pr" to "type:pr" to catch active + merged/closed states by default
+        let query = "type:pr author:@me"; // Safe default for all tokens
         let hasSpecificRepo = false;
         
-        if (repoName && repoName !== "Unknown Project" && repoName.trim() !== "") {
+        // 💡 FIX 2: Added "none" check to prevent empty repository logic from breaking the query path
+        if (repoName && repoName !== "Unknown Project" && repoName.trim() !== "" && repoName.trim().toLowerCase() !== "none") {
             const cleanRepo = repoName.trim();
             hasSpecificRepo = true;
             
@@ -25,6 +27,9 @@ export const fetchGitHubPRs = async (file: string, token: string, repoName?: str
             order: 'desc',
             per_page: 20
         });
+
+        // Fail-safe protection if data or items array comes back missing
+        if (!data || !data.items) {return [];}
 
         const safeTargetRepo = (repoName || "").trim().toLowerCase();
         const targetRepoNameOnly = safeTargetRepo.includes('/') ? safeTargetRepo.split('/').pop() : safeTargetRepo;
@@ -51,7 +56,9 @@ export const fetchGitHubPRs = async (file: string, token: string, repoName?: str
             };
         })
         .filter((pr: any) => {
-            if (!hasSpecificRepo) {
+            // 💡 FIX 3: If no repository is active or if the context is explicitly "none", do not drop the records. 
+            // Allow recent global user PR layout streams to populate.
+            if (!hasSpecificRepo || safeTargetRepo === "none") {
                 return true; 
             }
 
