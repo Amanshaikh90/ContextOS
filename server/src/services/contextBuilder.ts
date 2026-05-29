@@ -102,8 +102,11 @@ export async function getContextForUser(
     isHistorical: true,
   }));
 
+  // 💡 FIXED: Gracefully allow all PRs to pass through if there's no active repo or if it's "none"
   const filterByRepo = (pr: any) => {
-    if (!targetRepo) {return true;}
+    if (!targetRepo || targetRepo.trim() === "" || targetRepo.toLowerCase() === "none") {
+      return true;
+    }
     const cleanTarget = targetRepo.toLowerCase();
     const targetNameOnly = cleanTarget.includes('/') ? cleanTarget.split('/').pop() : cleanTarget;
     const prRepo = (pr.repo || '').toLowerCase();
