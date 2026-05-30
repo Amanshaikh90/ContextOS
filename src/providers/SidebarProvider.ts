@@ -11,6 +11,9 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   private _isGlobalDashboardMode: boolean = false; 
   private _badgeView?: vscode.TreeView<any>;     
 
+  // ✅ NEW: Track the repository that the webview is currently showing
+  private _webviewRepo: string = '';
+
   constructor(
     private readonly _extensionUri: vscode.Uri,
     private readonly _userId: string
@@ -33,12 +36,13 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     this._setWebviewMessageListener(webviewView.webview);
 
     this._currentRepo = "";
-    this._isGlobalDashboardMode = false; // Reset whenever views initialize or refresh
+    this._isGlobalDashboardMode = false;
+    this._webviewRepo = "";                   // start with “all repos”
     this._connectWebSocket("");
   }
 
   public updateContext(filename: string, folderName: string, repoName: string = ''): void {
-    
+    // Show file info in the header (unchanged)
     if (this._isGlobalDashboardMode) {
       this._view?.webview.postMessage({
         type: WebviewMessageType.FileChanged,
@@ -57,7 +61,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
     });
 
     this._currentRepo = repoName;
-    updateRepo(repoName);
+    // Do NOT update the WebSocket subscription here – the webview’s request will handle it
   }
 
   private _connectWebSocket(repo: string): void {
@@ -75,36 +79,32 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
   }
 
   private async _fetchAndPostContext(webhookRepo: string) {
-    let fetchRepo = '';
-    if (this._currentRepo === '') {
-      fetchRepo = '';
-    } else if (webhookRepo.toLowerCase() === this._currentRepo.toLowerCase()) {
-      fetchRepo = webhookRepo;
-    } else {
-      return;
-    }
+  // Always refresh whatever repo the sidebar is currently showing.
+  // If the webview is viewing all repos (_webviewRepo === ''), fetch all.
+  // If it's viewing a specific repo, fetch that exact repo.
+  const fetchRepo = this._webviewRepo;   // '' for all, or 'owner/repo'
 
-    try {
-      const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
-      url.searchParams.append("userId", this._userId);
-      if (fetchRepo) {url.searchParams.append("repo", fetchRepo);}
-      url.searchParams.append("refresh", "true"); 
+  try {
+    const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
+    url.searchParams.append("userId", this._userId);
+    if (fetchRepo) { url.searchParams.append("repo", fetchRepo); }
+    url.searchParams.append("refresh", "true");   // bypass cache
 
-      const response = await fetch(url.toString());
-      if (!response.ok) {throw new Error(`Status ${response.status}`);}
+    const response = await fetch(url.toString());
+    if (!response.ok) { throw new Error(`Status ${response.status}`); }
 
-      const result = await response.json();
+    const result = await response.json();
 
-      this._view?.webview.postMessage({
-        type: WebviewMessageType.ContextLoaded,
-        value: { ...result, _source: 'websocket-refresh' },
-      });
+    this._view?.webview.postMessage({
+      type: WebviewMessageType.ContextLoaded,
+      value: { ...result, _source: 'websocket-refresh' },
+    });
 
-      this._updateBadge(result.github || []);
-    } catch (err: any) {
-      console.error("[contextOS] WebSocket refresh fetch failed:", err);
-    }
+    this._updateBadge(result.github || []);
+  } catch (err: any) {
+    console.error("[contextOS] WebSocket refresh fetch failed:", err);
   }
+}
 
   private _updateBadge(prs: any[]) {
     if (!this._badgeView) {return;}
@@ -127,6 +127,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         switch (data.type) {
           case "request-context-data": {
             const { file, folder, repo, refresh, skipAI } = data.payload || {};
+
+            // ✅ NEW: Remember the webview’s current repo and keep the WS subscription in sync
+            this._webviewRepo = repo || '';
+            updateRepo(this._webviewRepo);
 
             try {
               const url = new URL(`${PRODUCTION_BACKEND_URL}/context`);
@@ -180,10 +184,10 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
             vscode.env.openExternal(vscode.Uri.parse(`${PRODUCTION_BACKEND_URL}/auth/slack?userId=${this._userId}`));
             break;
 
-          
           case "clear-repo-lock":
             this._currentRepo = "";
             this._isGlobalDashboardMode = true;
+            this._webviewRepo = "";           // ✅ also reset the webview repo
             updateRepo("");
             break;
 

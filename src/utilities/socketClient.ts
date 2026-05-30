@@ -26,7 +26,7 @@ export function connectSocket(
   }
 
   try {
-    ws = new WebSocket('ws://localhost:3001');
+    ws = new WebSocket('wss://contextos-production.up.railway.app');
 
     ws.on('open', () => {
       console.log('[WS Client] Connected');

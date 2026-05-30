@@ -1,8 +1,8 @@
 import { Request, Response } from 'express';
 import { contextService } from '../services/context.service.js';
-import { getContextForUser } from '../services/contextBuilder.js';   // NEW
-import { broadcastToRepo } from '../services/socket.js';             // NEW
+import { broadcastToRepo } from '../services/socket.js';
 import crypto from 'crypto';
+import { redis } from '../index.js';                  // ✅ NEW: import Redis client
 
 export const handleGithubWebhook = async (req: Request, res: Response) => {
   const signature = req.headers['x-hub-signature-256'] as string;
@@ -41,15 +41,18 @@ export const handleGithubWebhook = async (req: Request, res: Response) => {
           trackingUser
         );
 
-        // Build fresh context for this repository
-        
-
-        // Broadcast to all clients watching this repo (or "all")
+        // Broadcast refresh signal to all connected clients
         broadcastToRepo(payload.repository.full_name, { refresh: true, repo: payload.repository.full_name });
 
-        console.log(
-          `[Webhook] Broadcasted updated context for repo: ${payload.repository.full_name}`
-        );
+        // ✅ NEW: Invalidate all cached contexts for this repository
+        const repoLower = payload.repository.full_name.toLowerCase();
+        const keys = await redis.keys(`context:*:${repoLower}`);
+        if (keys.length > 0) {
+          await redis.del(...keys);
+          console.log(`[Webhook] Invalidated ${keys.length} cache entries for repo: ${repoLower}`);
+        }
+
+        console.log(`[Webhook] Broadcasted updated context for repo: ${payload.repository.full_name}`);
       }
     }
 
