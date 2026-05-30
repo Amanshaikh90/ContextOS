@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { contextService } from '../services/context.service.js';
 import { broadcastToRepo } from '../services/socket.js';
 import crypto from 'crypto';
-import { redis } from '../index.js';                  // ✅ NEW: import Redis client
+import { redis } from '../index.js';        
 
 export const handleGithubWebhook = async (req: Request, res: Response) => {
   const signature = req.headers['x-hub-signature-256'] as string;
