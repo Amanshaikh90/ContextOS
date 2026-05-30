@@ -12,6 +12,9 @@ import { setupWebSocketServer } from './services/socket.js';
 const app = express();
 export const redis = new Redis(process.env.REDIS_URL || 'redis://redis:6379');
 
+///allow railwat
+app.set('trust proxy',1);
+
 // ── Security headers via Helmet ─────────────────────────────────────────────
 // Sets: X-Frame-Options, X-Content-Type-Options, Strict-Transport-Security,
 // Content-Security-Policy, X-XSS-Protection, Referrer-Policy, and more.
@@ -85,11 +88,9 @@ app.get('/health', (_req, res) => res.json({ status: 'ok' }));
 
 // ── Global error handler (never leak stack traces to the client) ─────────────
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const statusCode = err.status || 500;
-  // Only log full error server-side; never send stack to client
   console.error('[Unhandled error]', err);
-  res.status(statusCode).json({
-    error: statusCode === 500 ? 'Internal server error' : err.message,
+  res.status(err.status || 500).json({
+    error: err.status === 500 || !err.status ? 'Internal server error' : err.message,
   });
 });
 

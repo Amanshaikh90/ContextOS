@@ -2,7 +2,7 @@
   "name": "contextos",
   "displayName": "contextOS AI",
   "description": "AI-native sidebar connecting your workspace code directly to live GitHub Pull Requests, Jira issues, and team discussions.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "AmanShaikh",
   "author": {
     "name": "Aman Shaikh"
