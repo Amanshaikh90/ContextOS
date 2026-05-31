@@ -17,21 +17,37 @@ export async function getContextForUser(
   const cleanRepoKey = targetRepo ? targetRepo.toLowerCase() : 'none';
   const cacheKey = `context:${userId}:${cleanRepoKey}`;
 
+  // ── Cache read ──────────────────────────────────────────────────────────────
+  // Skip cache on explicit refresh (triggered by webhook or manual button).
   const cachedData = refresh ? null : await contextCache.getContext(cacheKey);
-  if (cachedData && !refresh) {
+  if (cachedData) {
     const cachedRepo = cachedData.repo || '';
     if (cachedRepo.toLowerCase() === targetRepo.toLowerCase()) {
-      console.log(`[Cache Hit] Returning cached context for ${cacheKey}`);
+      console.log(`[Cache Hit] ${cacheKey}`);
       return cachedData;
     }
   }
 
+  // ── Bust cross-case caches on a live refresh ────────────────────────────────
+  // When a webhook triggers a refresh, BOTH the Case 1 (global/none) cache and
+  // the Case 2 (specific-repo) cache can be stale. We bust the sibling cache
+  // BEFORE fetching so that whichever case the user opens next, they also get
+  // fresh data rather than old cached values.
+  //
+  //  • Refreshing specific repo → bust global cache (user might switch to Case 1)
+  //  • Refreshing global        → bust specific-repo cache (user might switch to Case 2)
+  if (refresh) {
+    await contextCache.bustLiveUpdate(userId, targetRepo || undefined);
+  }
+
+  // ── Fetch tokens for all integrations in parallel ───────────────────────────
   const [githubRecord, jiraRecord, slackRecord] = await Promise.all([
     getTokenByUserId(userId, 'github').catch(() => null),
     getTokenByUserId(userId, 'jira').catch(() => null),
     getTokenByUserId(userId, 'slack').catch(() => null),
   ]);
 
+  // ── Fetch live data + historical vector context in parallel ─────────────────
   const [github, jira, slack, historicalContext] = await Promise.all([
     githubRecord?.accessToken
       ? fetchGitHubPRs('', githubRecord.accessToken, targetRepo).catch(() => [])
@@ -49,41 +65,29 @@ export async function getContextForUser(
       : [],
   ]);
 
-  
+  // ── Auto-backfill Pinecone if no vectors exist for this repo ─────────────────
   let finalHistoricalContext = [...historicalContext];
-
   if (targetRepo && historicalContext.length === 0 && github.length > 0) {
-    console.log(`[Backfill] No vectors found for user ${userId}. Auto-indexing up to 5 recent PRs.`);
+    console.log(`[Backfill] No vectors for userId=${userId}. Indexing ${Math.min(github.length, 5)} PRs.`);
     try {
-      
       const { contextService } = await import('./context.service.js');
-      
-      
-      const prsToBackfill = github.slice(0, 5);
-      
-      for (const pr of prsToBackfill) {
+      for (const pr of github.slice(0, 5)) {
         await contextService.indexGithubPR(
-          {
-            id: pr.id,
-            title: pr.title,
-            body: `Status: ${pr.status || 'open'}. URL reference: ${pr.url || ''}`,
-            html_url: pr.url
-          },
+          { id: pr.id, title: pr.title, body: `Status: ${pr.status || 'open'}. URL: ${pr.url || ''}`, html_url: pr.url },
           targetRepo,
           userId
         );
       }
-
-      
       const freshVector = await embeddingService.generateEmbedding(targetRepo);
       if (freshVector) {
         finalHistoricalContext = await pineconeService.queryContext(freshVector, 5, targetRepo, userId);
       }
     } catch (backfillError) {
-      console.error("[Backfill Module Recovery] Intercepted error during synchronization:", backfillError);
+      console.error('[Backfill] Error:', backfillError);
     }
   }
 
+  // ── Shape live PRs ──────────────────────────────────────────────────────────
   const livePRs = github.map((pr: any) => ({
     id: `live-${pr.id || Math.random()}`,
     title: pr.title || 'Untitled PR',
@@ -92,7 +96,7 @@ export async function getContextForUser(
     status: pr.status || 'open',
   }));
 
-  
+  // ── Shape historical PRs from Pinecone ──────────────────────────────────────
   const mappedHistorical = finalHistoricalContext.map((match: any) => ({
     id: `hist-${match.id || Math.random()}`,
     title: match.metadata?.title || 'Untitled Historical PR',
@@ -102,9 +106,9 @@ export async function getContextForUser(
     isHistorical: true,
   }));
 
-  // 💡 FIXED: Gracefully allow all PRs to pass through if there's no active repo or if it's "none"
+  // ── Filter by repo (Case 2) or pass all (Case 1) ────────────────────────────
   const filterByRepo = (pr: any) => {
-    if (!targetRepo || targetRepo.trim() === "" || targetRepo.toLowerCase() === "none") {
+    if (!targetRepo || targetRepo.trim() === '' || targetRepo.toLowerCase() === 'none') {
       return true;
     }
     const cleanTarget = targetRepo.toLowerCase();
@@ -116,15 +120,14 @@ export async function getContextForUser(
 
   const combinedGithub = [...livePRs, ...mappedHistorical].filter(filterByRepo);
 
+  // ── AI summary ──────────────────────────────────────────────────────────────
   let aiSummary = '';
   if (skipAI) {
-    // Read from your clean cache file if it exists, else leave it empty to trigger fresh model insights below
     aiSummary = cachedData?.aiSummary || '';
   } else if (refresh && cachedData) {
     aiSummary = cachedData.aiSummary;
   }
 
-  // Enforce true fallback generation so that a missing cache doesn't display a hardcoded string
   if (!aiSummary) {
     try {
       aiSummary = await getAIContextSummary(
@@ -148,6 +151,7 @@ export async function getContextForUser(
     aiSummary,
   };
 
+  // Write the fresh result to cache (skip if AI was skipped — partial data)
   if (!skipAI) {
     await contextCache.setContext(cacheKey, responseData);
   }

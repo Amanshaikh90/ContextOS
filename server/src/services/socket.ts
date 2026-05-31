@@ -1,6 +1,5 @@
 import { Server as HttpServer } from 'http';
 import { WebSocketServer, WebSocket } from 'ws';
-import { redis } from '../index.js';
 
 interface ConnectedClient {
   ws: WebSocket;
@@ -8,75 +7,46 @@ interface ConnectedClient {
   repo: string;
 }
 
-// Map of userId → connected clients for that user
+// userId → list of active connections for that user
 const clients = new Map<string, ConnectedClient[]>();
-
-/**
- * Generate a short-lived WebSocket auth token for a given userId.
- * Call this from your /api/auth/ws-token endpoint; the extension requests it
- * right before opening the WebSocket connection.
- */
-export async function createWsToken(userId: string): Promise<string> {
-  const token = `wst_${userId}_${Math.random().toString(36).slice(2)}`;
-  // Token expires in 60 seconds — enough time to open the socket and subscribe
-  await redis.set(`ws:token:${token}`, userId, 'EX', 60);
-  return token;
-}
-
-async function validateWsToken(token: string): Promise<string | null> {
-  if (!token) {return null;}
-  const key = `ws:token:${token}`;
-  const userId = await redis.get(key);
-  if (userId) {await redis.del(key);} // single-use token
-  return userId;
-}
 
 export function setupWebSocketServer(server: HttpServer): void {
   const wss = new WebSocketServer({ server });
 
   wss.on('connection', (ws: WebSocket) => {
     let clientInfo: ConnectedClient | null = null;
-    let authenticated = false;
 
-    // Kick unauthenticated clients after 10 seconds
-    const authTimeout = setTimeout(() => {
-      if (!authenticated) {
-        ws.close(1008, 'Authentication timeout');
-      }
-    }, 10_000);
-
-    ws.on('message', async (data: Buffer) => {
+    ws.on('message', (data: Buffer) => {
       try {
         const message = JSON.parse(data.toString());
 
-        // ── Step 1: authenticate with a ws-token before anything else ────────
-        if (message.type === 'auth') {
-          const userId = await validateWsToken(message.token);
+        // ── subscribe: the only message type the extension sends ─────────────
+        // The userId is a random UUID stored in VS Code globalState — it has
+        // no personal data and the WebSocket only sends "please refresh" signals,
+        // never raw tokens or user data. So subscribe-based identity is fine here.
+        if (message.type === 'subscribe') {
+          const { userId, repo } = message.payload || {};
+
           if (!userId) {
-            ws.close(1008, 'Invalid or expired token');
+            ws.close(1008, 'Missing userId in subscribe payload');
             return;
           }
-          authenticated = true;
-          clearTimeout(authTimeout);
-          ws.send(JSON.stringify({ type: 'auth_ok' }));
-          console.log(`[WS] Client authenticated: userId=${userId}`);
-          return;
-        }
-
-        // ── Step 2: only allow subscribe after authentication ─────────────────
-        if (!authenticated) {
-          ws.close(1008, 'Not authenticated');
-          return;
-        }
-
-        if (message.type === 'subscribe') {
-          const { userId, repo } = message.payload;
-          if (!userId) { ws.close(1008, 'Missing userId'); return; }
 
           const normalizedRepo = (repo || '').toLowerCase();
+
+          // If this client was already subscribed, update its repo
+          if (clientInfo) {
+            clientInfo.repo = normalizedRepo;
+            console.log(`[WS] Re-subscribed: userId=${userId}, repo=${normalizedRepo || 'all'}`);
+            return;
+          }
+
+          // First subscription
           clientInfo = { ws, userId, repo: normalizedRepo };
 
-          if (!clients.has(userId)) {clients.set(userId, []);}
+          if (!clients.has(userId)) {
+            clients.set(userId, []);
+          }
           clients.get(userId)!.push(clientInfo);
 
           console.log(`[WS] Subscribed: userId=${userId}, repo=${normalizedRepo || 'all'}`);
@@ -87,7 +57,6 @@ export function setupWebSocketServer(server: HttpServer): void {
     });
 
     ws.on('close', () => {
-      clearTimeout(authTimeout);
       if (clientInfo) {
         const remaining = (clients.get(clientInfo.userId) || []).filter(c => c !== clientInfo);
         clients.set(clientInfo.userId, remaining);
@@ -95,10 +64,18 @@ export function setupWebSocketServer(server: HttpServer): void {
       }
     });
 
-    ws.on('error', (err) => console.error('[WS] Error:', err));
+    ws.on('error', (err) => console.error('[WS] Connection error:', err));
   });
+
+  console.log('[WS] Server ready');
 }
 
+/**
+ * Broadcast a message to every client watching `repo` (Case 2)
+ * AND every client watching '' (Case 1 — global dashboard).
+ *
+ * Optionally restrict to a specific userId.
+ */
 export function broadcastToRepo(repo: string, data: any, userId?: string): void {
   const normalizedRepo = (repo || '').toLowerCase();
 
@@ -106,7 +83,13 @@ export function broadcastToRepo(repo: string, data: any, userId?: string): void 
     if (userId && uid !== userId) {continue;}
 
     for (const client of userConnections) {
-      if (client.repo === '' || client.repo === normalizedRepo) {
+      // Send to:
+      //  - Case 1 clients (repo = '') — they watch everything
+      //  - Case 2 clients that match this repo
+      const isGlobalClient = client.repo === '';
+      const isMatchingRepo = client.repo === normalizedRepo;
+
+      if (isGlobalClient || isMatchingRepo) {
         if (client.ws.readyState === WebSocket.OPEN) {
           try {
             client.ws.send(JSON.stringify({ type: 'contextUpdate', payload: data }));

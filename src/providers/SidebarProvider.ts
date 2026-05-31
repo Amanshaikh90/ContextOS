@@ -81,7 +81,7 @@ export class SidebarProvider implements vscode.WebviewViewProvider {
         });
       }
     };
-    connectSocket(this._userId, repo, handler);
+    connectSocket(this._userId, repo, handler, getBackendUrl());
   }
 
   private async _fetchAndPostContext(webhookRepo: string): Promise<void> {
