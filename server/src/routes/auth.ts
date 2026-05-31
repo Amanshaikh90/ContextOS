@@ -145,7 +145,7 @@ router.get('/jira', async (req, res) => {
   if (!userId) {return res.status(400).send('userId is required');}
 
   const nonce = await createState(userId);
-  const scopes = encodeURIComponent('read:jira-work read:jira-user');
+  const scopes = encodeURIComponent('read:jira-work read:jira-user offline_access');
   const redirectUri = encodeURIComponent(process.env.JIRA_CALLBACK_URL!);
   const authUrl = `https://auth.atlassian.com/authorize?audience=api.atlassian.com&client_id=${process.env.JIRA_CLIENT_ID}&scope=${scopes}&redirect_uri=${redirectUri}&state=${nonce}&response_type=code&prompt=consent`;
   res.redirect(authUrl);
@@ -169,7 +169,7 @@ router.get('/jira/callback', async (req: Request, res: Response) => {
       redirect_uri: process.env.JIRA_CALLBACK_URL,
     });
 
-    const { access_token } = response.data;
+    const { access_token, refresh_token } = response.data;
 
     const resourcesRes = await axios.get(
       'https://api.atlassian.com/oauth/token/accessible-resources',
@@ -188,7 +188,7 @@ router.get('/jira/callback', async (req: Request, res: Response) => {
       `);
     }
 
-    await saveToken(userId, 'jira', access_token);
+    await saveToken(userId, 'jira', access_token,refresh_token);
     res.send('<h1>Jira Connected! You can close this window.</h1>');
   } catch (err) {
     console.error('[Auth/Jira] Callback error:', err);
