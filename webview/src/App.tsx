@@ -242,6 +242,22 @@ const App: React.FC = () => {
         <button style={authBtnStyle} onClick={() => startAuth('slack')}>Slack</button>
       </section>
 
+      {/* ── Reconnect banner: appears when a service token is missing or expired ── */}
+      {data?.authStatus && (!data.authStatus.github || !data.authStatus.jira || !data.authStatus.slack) && (
+        <div style={{ background: 'rgba(255,200,0,0.12)', border: '1px solid rgba(200,160,0,0.5)', borderRadius: '4px', padding: '7px 10px', marginBottom: '10px', fontSize: '11px', color: 'var(--vscode-foreground)' }}>
+          <span style={{ fontWeight: 'bold' }}>⚠ Reconnect needed: </span>
+          {!data.authStatus.github && (
+            <button onClick={() => startAuth('github')} style={{ background: 'none', border: 'none', color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontSize: '11px', textDecoration: 'underline', marginRight: '8px', padding: 0 }}>GitHub</button>
+          )}
+          {!data.authStatus.jira && (
+            <button onClick={() => startAuth('jira')} style={{ background: 'none', border: 'none', color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontSize: '11px', textDecoration: 'underline', marginRight: '8px', padding: 0 }}>Jira</button>
+          )}
+          {!data.authStatus.slack && (
+            <button onClick={() => startAuth('slack')} style={{ background: 'none', border: 'none', color: 'var(--vscode-textLink-foreground)', cursor: 'pointer', fontSize: '11px', textDecoration: 'underline', padding: 0 }}>Slack</button>
+          )}
+        </div>
+      )}
+
       {error && <div style={errorStyle}>⚠️ {error}</div>}
 
       {(activeRepo || submittedRepo) ? (

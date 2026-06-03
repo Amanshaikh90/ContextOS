@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { deleteToken, getTokenByUserId, saveToken } from './dbHelper.js';
+import { getTokenByUserId, saveToken } from './dbHelper.js';
 
 
 
@@ -13,16 +13,11 @@ const refreshJiraToken = async (userId: string, refreshToken: string) => {
         });
 
         const { access_token, refresh_token: newRefreshToken } = response.data;
+        // Save the new tokens back to Postgres
         await saveToken(userId, 'jira', access_token, newRefreshToken);
         return access_token;
-    } catch (error: any) {
-        console.error("Failed to refresh Jira token:", error.response?.data || error.message);
-
-        // If the refresh token is invalid, delete the stored token so the user can re-auth cleanly
-        if (error.response?.status === 401 || error.response?.status === 400) {
-            console.log(`[Jira] Removing invalid token for user ${userId}`);
-            await deleteToken(userId, 'jira');   // uses your existing dbHelper.deleteToken
-        }
+    } catch (error) {
+        console.error("Failed to refresh Jira token:", error);
         return null;
     }
 };
@@ -64,18 +59,28 @@ export const fetchJiraTickets:any = async (file: string, token: string,userId?:s
             url: `https://${siteName}.atlassian.net/browse/${issue.key}`
         }));
     } catch (error: any) {
-        // auto refresh token
-        if(error.response?.status===401&&userId){
-            console.log("jira token expired, attenmpting refresh");
-            const record = await getTokenByUserId(userId,'jira');
-            if(record?.refreshToken){
-                const newToken=await refreshJiraToken(userId,record.refreshToken);
-                if(newToken) {
-                    return fetchJiraTickets(file,newToken,userId);
+        if (error.response?.status === 401 && userId) {
+            const record = await getTokenByUserId(userId, 'jira');
+
+            if (record?.refreshToken) {
+                // Only log "attempting refresh" when we actually have a refresh token to use
+                console.log('[Jira] Access token expired — attempting silent token refresh...');
+                const newToken = await refreshJiraToken(userId, record.refreshToken);
+                if (newToken) {
+                    console.log('[Jira] Token refreshed successfully. Retrying.');
+                    return fetchJiraTickets(file, newToken, userId);
                 }
+                // Refresh token rejected by Atlassian — user must re-auth
+                console.warn('[Jira] Refresh token rejected (expired/revoked). User must reconnect Jira.');
+            } else {
+                // No refresh token in DB — either the token was saved before the auth fix
+                // that added offline_access scope, or the user never re-authenticated.
+                // User must click the Jira button in the extension to reconnect.
+                console.warn('[Jira] No refresh token stored. User must reconnect Jira (click the Jira button in the sidebar).');
             }
+            return [];
         }
-        console.error("Jira API Fetch Error:", error.response?.data || error.message);
+        console.error('[Jira] API fetch error:', error.response?.data || error.message);
         return [];
     }
 };

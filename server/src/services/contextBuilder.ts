@@ -42,10 +42,31 @@ export async function getContextForUser(
 
   // ── Fetch tokens for all integrations in parallel ───────────────────────────
   const [githubRecord, jiraRecord, slackRecord] = await Promise.all([
-    getTokenByUserId(userId, 'github').catch(() => null),
-    getTokenByUserId(userId, 'jira').catch(() => null),
-    getTokenByUserId(userId, 'slack').catch(() => null),
+    getTokenByUserId(userId, 'github').catch((e) => {
+      // Decrypt failure usually means LEGACY_ENCRYPTION_KEY mismatch or token not in DB.
+      // This surfaces the real reason instead of silently returning empty PRs.
+      console.error(`[contextBuilder] GitHub token error for userId=${userId}:`, e.message);
+      return null;
+    }),
+    getTokenByUserId(userId, 'jira').catch((e) => {
+      console.error(`[contextBuilder] Jira token error for userId=${userId}:`, e.message);
+      return null;
+    }),
+    getTokenByUserId(userId, 'slack').catch((e) => {
+      console.error(`[contextBuilder] Slack token error for userId=${userId}:`, e.message);
+      return null;
+    }),
   ]);
+
+  // Track which services have a working token so the frontend can show reconnect prompts
+  const authStatus = {
+    github: !!githubRecord?.accessToken,
+    jira:   !!jiraRecord?.accessToken,
+    slack:  !!slackRecord?.accessToken,
+  };
+  if (!authStatus.github) {
+    console.warn(`[contextBuilder] GitHub token missing/invalid for userId=${userId} — PRs will be empty.`);
+  }
 
   // ── Fetch live data + historical vector context in parallel ─────────────────
   const [github, jira, slack, historicalContext] = await Promise.all([
@@ -149,6 +170,7 @@ export async function getContextForUser(
     jira: jira || [],
     slack: slack || [],
     aiSummary,
+    authStatus, // tells the frontend which services are connected/broken
   };
 
   // Write the fresh result to cache (skip if AI was skipped — partial data)

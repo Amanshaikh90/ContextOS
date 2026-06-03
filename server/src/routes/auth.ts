@@ -87,11 +87,18 @@ router.get('/github', async (req: Request, res: Response) => {
       }
     }
 
-    // New user or revoked token — route to App installation first
+    // No token or revoked: go straight to OAuth — always.
+    // The GitHub App installation (for webhooks) is a separate concern.
+    // Routing to the App installation page means GitHub redirects to the App's
+    // setup_url (NOT /auth/github/callback), so saveToken is never called and
+    // the access token is never stored — hence PRs never appear.
     const nonce = await createState(targetUserId);
-    return res.redirect(
-      `https://github.com/apps/ContextOS-Beta/installations/new?state=${nonce}`
-    );
+    const params = new URLSearchParams({
+      client_id: process.env.GITHUB_CLIENT_ID!,
+      redirect_uri: `${BASE_URL}/auth/github/callback`,
+      state: nonce,
+    });
+    return res.redirect(`https://github.com/login/oauth/authorize?${params}`);
   } catch (err) {
     console.error('[Auth/GitHub] Error:', err);
     const nonce = await createState(targetUserId);
