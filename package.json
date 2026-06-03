@@ -2,7 +2,7 @@
   "name": "contextos",
   "displayName": "contextOS AI",
   "description": "AI-native sidebar connecting your workspace code directly to live GitHub Pull Requests, Jira issues, and team discussions.",
-  "version": "0.0.4",
+  "version": "0.0.6",
   "publisher": "AmanShaikh",
   "author": {
     "name": "Aman Shaikh"
@@ -10,7 +10,7 @@
   "license": "MIT",
   "icon": "image/logo.png",
   "engines": {
-    "vscode": "^1.116.0"
+    "vscode": "^1.75.0"
   },
   "extensionDependencies": [
     "vscode.git"
@@ -86,7 +86,7 @@
     "@types/node": "22.x",
     "@types/react": "^19.2.14",
     "@types/react-dom": "^19.2.3",
-    "@types/vscode": "^1.116.0",
+    "@types/vscode": "^1.75.0",
     "@types/vscode-webview": "^1.57.5",
     "@types/ws": "^8.18.1",
     "@vscode/test-cli": "^0.0.12",

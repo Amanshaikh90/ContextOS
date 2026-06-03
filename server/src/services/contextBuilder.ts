@@ -1,5 +1,5 @@
 import { getTokenByUserId } from './dbHelper.js';
-import { fetchGitHubPRs } from './github.js';
+import { fetchGitHubPRs, checkGitHubInstallation } from './github.js'; // Imported validation step
 import { fetchJiraTickets } from './jira.js';
 import { fetchSlackThreads } from './slack.js';
 import { getAIContextSummary } from './ai/ai.service.js';
@@ -29,13 +29,6 @@ export async function getContextForUser(
   }
 
   // ── Bust cross-case caches on a live refresh ────────────────────────────────
-  // When a webhook triggers a refresh, BOTH the Case 1 (global/none) cache and
-  // the Case 2 (specific-repo) cache can be stale. We bust the sibling cache
-  // BEFORE fetching so that whichever case the user opens next, they also get
-  // fresh data rather than old cached values.
-  //
-  //  • Refreshing specific repo → bust global cache (user might switch to Case 1)
-  //  • Refreshing global        → bust specific-repo cache (user might switch to Case 2)
   if (refresh) {
     await contextCache.bustLiveUpdate(userId, targetRepo || undefined);
   }
@@ -43,8 +36,6 @@ export async function getContextForUser(
   // ── Fetch tokens for all integrations in parallel ───────────────────────────
   const [githubRecord, jiraRecord, slackRecord] = await Promise.all([
     getTokenByUserId(userId, 'github').catch((e) => {
-      // Decrypt failure usually means LEGACY_ENCRYPTION_KEY mismatch or token not in DB.
-      // This surfaces the real reason instead of silently returning empty PRs.
       console.error(`[contextBuilder] GitHub token error for userId=${userId}:`, e.message);
       return null;
     }),
@@ -58,20 +49,29 @@ export async function getContextForUser(
     }),
   ]);
 
+  // ── NEW: Dynamic validation check for authentic app installation state ──
+  const githubToken = githubRecord?.accessToken;
+  let isAppInstalled = false;
+  if (githubToken) {
+    isAppInstalled = await checkGitHubInstallation(githubToken);
+  }
+
   // Track which services have a working token so the frontend can show reconnect prompts
   const authStatus = {
-    github: !!githubRecord?.accessToken,
+    github: !!githubToken,
+    githubAppInstalled: isAppInstalled, // Dynamic safety flag exposed cleanly here
     jira:   !!jiraRecord?.accessToken,
     slack:  !!slackRecord?.accessToken,
   };
+  
   if (!authStatus.github) {
     console.warn(`[contextBuilder] GitHub token missing/invalid for userId=${userId} — PRs will be empty.`);
   }
 
   // ── Fetch live data + historical vector context in parallel ─────────────────
   const [github, jira, slack, historicalContext] = await Promise.all([
-    githubRecord?.accessToken
-      ? fetchGitHubPRs('', githubRecord.accessToken, targetRepo).catch(() => [])
+    githubToken
+      ? fetchGitHubPRs('', githubToken, targetRepo).catch(() => [])
       : [],
     jiraRecord?.accessToken
       ? fetchJiraTickets(targetRepo || 'Global Dashboard', jiraRecord.accessToken, userId).catch(() => [])
@@ -170,7 +170,7 @@ export async function getContextForUser(
     jira: jira || [],
     slack: slack || [],
     aiSummary,
-    authStatus, // tells the frontend which services are connected/broken
+    authStatus,
   };
 
   // Write the fresh result to cache (skip if AI was skipped — partial data)
